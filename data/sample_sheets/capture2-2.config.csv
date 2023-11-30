@@ -1,0 +1,12 @@
+[gene-expression]
+reference,/group/canc2/anson/reference/genome/cellranger/refdata-gex-GRCh38-2020-A
+
+[feature]
+reference,/group/canc2/anson/reference/genome/cellranger/features.csv
+
+[libraries]
+fastq_id,fastqs,feature_types
+AW-GEX-2,/group/canc2/anson/raw/chapter4_batch2/230928_A01221_0202_AHN7TNDMXY_DI/c2,Gene Expression
+AW-HTO-2,/group/canc2/anson/raw/chapter4_batch2/230928_A01221_0202_AHN7TNDMXY_HTO/c2,Antibody capture
+AW-HTO-2,/group/canc2/anson/raw/chapter4_batch2/231013_A00692_0382_AHVHC3DSX7,Antibody capture
+AW-HTO-2,/group/canc2/anson/raw/chapter4_batch2/231024_A00692_0386_BHNHL2DMXY,Antibody capture
