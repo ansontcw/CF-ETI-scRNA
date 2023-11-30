@@ -1,0 +1,2021 @@
+---
+title: "Subclustering of T cells and other cells"
+author: "Anson Wong"
+date: '2023-06-21'
+output: html_document
+---
+
+Load packages
+```{r}
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(SeuratData))
+suppressPackageStartupMessages(library(patchwork))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(scCustomize))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(Polychrome))
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(pals))
+suppressPackageStartupMessages(library(nrmisc))
+suppressPackageStartupMessages(library(paletteer))
+suppressPackageStartupMessages(library(BiocStyle))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(glue))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(ggpubr))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(ggsci))
+suppressPackageStartupMessages(library(ggthemes))
+suppressPackageStartupMessages(library(gplots))
+suppressPackageStartupMessages(library(speckle))
+suppressPackageStartupMessages(library(Cepo))
+suppressPackageStartupMessages(library(dittoSeq))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(tidyHeatmap))
+suppressPackageStartupMessages(library(ggplotify))
+suppressPackageStartupMessages(library(jpeg))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(chroma))
+
+```
+
+# Sub-clustering of T cells
+Annotate (round 1)
+```{r}
+# read object
+seu <- readRDS(here('data/SCEs/ETI.tcell.integrated.subclustered.SEU.rds'))
+DefaultAssay(seu) <- "RNA"
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+
+# Check predictive score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=magma(256)) / 
+  #DimPlot(seu, group.by = "predicted.ann_level_3", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.1", cols = colours)
+
+ggsave(plot=last_plot(),
+       filename = "tcell.round1.predScore.231111.pdf",
+       device="pdf",
+       height=4, width=4,
+       dpi=600)
+
+# Remove cluster 13, save object, then re-cluster again
+seu.subset <- subset(seu, SCT_snn_res.1 != "13")
+seu.subset$SCT_snn_res.1 <- fct_drop(seu.subset$SCT_snn_res.1)
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu.subset, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.tcell.integrated.subclustered.clear.SEU.rds")
+
+```
+
+Annotate SCT_snn_res.1 (round 2)
+```{r}
+# read object
+seu <- readRDS(here('data/SCEs/round2/ETI.tcell.integrated.subclustered.round2.SEU.rds'))
+DefaultAssay(seu) <- "RNA"
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+
+# Check predictive score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=magma(256)) / 
+  #DimPlot(seu, group.by = "predicted.ann_level_3", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.1", cols = colours)
+
+# I am using dims=1:10 and SCT_snn_res.0.7 for annotation.
+# feature plot 
+# t cell
+FeaturePlot_scCustom(seu, c('CD3E','CD3G','CD3D'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment: 
+# - from this plot, clusters 7 is not T cells
+
+# myeloid
+FeaturePlot_scCustom(seu, c('AIF1','LYZ','COTL1'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment: 
+# - from this plot, no conclusion
+
+# NK
+FeaturePlot_scCustom(seu, c('CD53','PTPRC','CORO1A','ISG20','CCL5',
+                            'GNLY', "SPON2", "FCGR3A", "IL2RB", "KLRF1"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# NK-all others from HLCA
+FeaturePlot_scCustom(seu, c('FCER1G','GNLY','KLRF1','KIR2DL1','GZMB', 'FGFBP2', 'NKG7',
+                            'ITGAD','CD247','KIR3DX1','ITGAX', 'KLRC3',
+                            'XCL1','CMC1','CD7','CCL3','NCR1','IL2RB','SRGN'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment: 
+# - from these plots, cluster 7 is NK cell
+
+# cd4
+FeaturePlot_scCustom(seu, c('CD4','CD40LG','CCR6','CXCR6'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment:
+# - from this plot, clusters 5,6,7,9,12 are CD4 cells
+
+# cd8
+FeaturePlot_scCustom(seu, c('CD8A','CD8B'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment: 
+# - from this plot, clusters 2,3,4,6,9,14 are CD8 cells
+
+
+# NK-T from Mel
+FeaturePlot_scCustom(seu, c("CD8A", "CD8B", "LINC02446", "ZNF683", "GZMH",
+                            "KIR2DL4", "KLRC1", "KLRC2", "ITGA1"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+FeaturePlot_scCustom(seu, c("S1PR1", "IL32", "CD62L", "CCR7"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment:
+# - from this plot, cluster 4 is NK-T cell.
+
+# CD4-Treg
+FeaturePlot_scCustom(seu, c('FOXP3','CCR4','CTLA4','IL2RA','TNFRSF4','TIGIT'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment:
+# - from this plot, clusters 8 is CD4 T-reg
+
+# gammadeltaT
+# FeaturePlot_scCustom(seu, c('TUBB', 'TRGV9', 'TRGJP2','TRGV1',
+#                             'KLRC2','TRDC','TRDV1','TRG-AS1','TRGC1','KIR2DL4',
+#                             'KLRG1', 'ZBTB16','GZMK'), 
+#                      label = FALSE, na_color="#E0E0E0",
+#                      na_cutoff = 0.00001,
+#                      #split.by = seu.subset$condition,
+#                      colors_use = magma(256))
+
+FeaturePlot_scCustom(seu, c(
+                            'KLRC2','TRDC','TRG-AS1','TRGC1',
+                            'KLRG1'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+# **comment:
+# - from this plot, cluster 3 gamma-delta T
+# - key marker genes include KLRC2, TRDC, KLRG1, TRG-AS1, TRGC1
+
+# CD8 Trm from Mel
+FeaturePlot_scCustom(seu, c("CD8A", "CD8B", "LINC02446", "ZNF683", "GZMH", "GZMK"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# CD8 Trm all from HLCA
+FeaturePlot_scCustom(seu, c("CD8A", "CD8B", 'GZMK','EOMES','DTHD1','CRTAM', 'LYST', 'TNIP3',
+                            'GZMB','CCL4','CCL5','ITGA1','PDCD1','ITGAE' ,'ZNF683'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# **comment:
+# - from this plot, CD8-TRM cells?
+# - key marker genes are ITGA1 and ITGAE
+
+# MAIT
+FeaturePlot_scCustom(seu, c('KLRB1','IL7R','IFNGR1','SLC4A10','TRAV1-2','TRBV6-2','DUSP2'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# ILC
+FeaturePlot_scCustom(seu, c('AREG','SOX4','KIT','TNFRSF18',
+                            'LEF1','MAL','XCL1','IL7R'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# Proliferating T
+FeaturePlot_scCustom(seu, c("TYMS", "MKI67", "PCLAF", "NUSAP1", "RRM2"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+#===============================================================================
+# Annotation for SCT_snn_res.1 231014
+Annotation <- setNames(c("CD4-T", #1   
+                    "CD8-T", #2       
+                    "γδ-T", #3      
+                    "NK-T", #4
+                    "CD4-T", #5      
+                    "CD8-T", #6 
+                    "NK", #7
+                    "CD4-Treg", #8 Treg
+                    "CD8-T", #9   
+                    "CD4-T", #10
+                    "CD8-T", #11  
+                    "CD4-T", #12 
+                    "Proliferating", #13
+                    "γδ-T" #14
+                    ), levels(seu$SCT_snn_res.1))
+
+# # Annotation for SCT_snn_res.0.7 231011
+# Annotation <- setNames(c("CD8-T", #1   
+#                     "CD4-T", #2       
+#                     "γδ-T", #3      
+#                     "NK-T", #4 d
+#                     "CD4-T", #5      
+#                     "CD4-T", #6 
+#                     "CD4-T", #7
+#                     "NK", #8
+#                     "CD4-T", #9   
+#                     "CD8-T", #10
+#                     "CD8-T", #11  
+#                     "Proliferating", #12 
+#                     "CD8-T", #13
+#                     "" #14
+#                     ), levels(seu$SCT_snn_res.1))
+
+Annotation <- Annotation[seu$SCT_snn_res.1]
+names(Annotation) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation, col.name = "Annotation")
+seu$Annotation <- factor(seu$Annotation)
+seu$ID <- factor(seu$ID)
+
+#===============================================================================
+# Plot UMAP
+cairo_pdf(file = here("data","figs","tcell.annotation.UMAP.231110.pdf"), height=4, width=4)
+DimPlot(seu, 
+        label=TRUE,
+        group.by = "Annotation", 
+        label.size = 3,
+        #split.by="condition1",
+        cols = colours) + NoLegend() + xlim(c(-8,8)) + 
+  ggtitle("T cell annotation")
+dev.off()
+
+cairo_pdf(file = here("data","figs","tcell.annotation.UMAP.splitByHTO.231110.pdf"), height=6, width=10)
+DimPlot(seu, 
+        label=FALSE,
+        group.by = "Annotation", 
+        split.by = "ID",
+        label.size = 3,ncol=5,
+        #split.by="condition1",
+        cols = colours) + xlim(c(-8,8)) + 
+  ggtitle("T cell split by ID")
+dev.off()
+
+# #===============================================================================
+# # Broad cell type
+# # Annotation for integrated_snn_res.0.7
+# Broad <- setNames(rep("T & NK", 14), levels(seu$Annotation))
+# 
+# Broad <- Broad[seu$Annotation]
+# names(Broad) <- colnames(seu)
+# seu <- AddMetaData(seu, metadata = Broad, col.name = "Broad")
+# seu$Broad <- factor(seu$Broad)
+
+
+# save annotated object
+saveRDS(seu, file = "data/SCEs/ETI.tcell.integrated.subclustered.annotated.SEU.rds")
+
+# save annotated
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.tcell.diet.SEU.rds")
+
+```
+
+
+
+# Sub-clustering of other cells
+
+Round 1
+```{r}
+# read object
+seu <- readRDS(here('data/SCEs/ETI.others.integrated.subclustered.SEU.rds'))
+DefaultAssay(seu) <- "RNA"
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+
+# check prediction score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=magma(256)) / 
+  DimPlot(seu, group.by = "predicted.ann_level_3", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.1", cols = colours)
+
+ggsave(plot=last_plot(),
+       filename = here('data','figs',"others.round1.predScore.231114.pdf"),
+       device="pdf",
+       height=12, width=6,
+       dpi=600)
+
+# Round 1 ======================================================================
+# mast cells did not form its own cluster. 
+# attempted to rerun FindClusters() at resolution of 1.1-1.5 but still failed
+# 231104: FindNeighbours() dims 1:30 worked.
+# removed the "EC capillary" cluster as it has a low predicted score
+# then re-cluster again
+seu.subset <- subset(seu, predicted.ann_level_3 != "EC capillary")
+seu.subset$predicted.ann_level_3 <- fct_drop(seu.subset$predicted.ann_level_3)
+DefaultAssay(seu.subset) <- "RNA"
+seu.diet <- DietSeurat(seu.subset, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.others.integrated.subclustered.clear.SEU.rds")
+seu.subset$ID <- factor(seu.subset$ID)
+summary(seu.subset$ID)
+
+```
+
+Round 2
+```{r}
+# read object
+seu <- readRDS(here('data/SCEs/round2/ETI.others.integrated.subclustered.round2.SEU.rds'))
+DefaultAssay(seu) <- "RNA"
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+
+# check prediction score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=inferno(256)) / 
+  DimPlot(seu, group.by = "predicted.ann_level_4", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.2", cols = colours)
+
+# resolution of 1.4 was chosen because it separates dividing cells from B cells
+
+# remove 219 non-mast cells in that cluster 13.
+cluster.13 <- subset(seu, SCT_snn_res.1.4 == "13")
+summary(cluster.13$predicted.ann_level_3)
+discard <- colnames(subset(cluster.13, predicted.ann_level_3 != "Mast cells"))
+seu$cell.name <- colnames(seu)
+seu.subset <- subset(seu, cell.name %in% discard, invert=TRUE)
+seu <- seu.subset
+seu$cell.name <- NULL
+
+# check prediction score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=inferno(256)) / 
+  DimPlot(seu, group.by = "predicted.ann_level_4", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.1.4", cols = colours)
+
+ggsave(plot=last_plot(),
+       filename = here('data','figs',"others.round2.predScore.231115.non-mastcell_rm.pdf"),
+       device="pdf",
+       height=12, width=6,
+       dpi=600)
+
+# B cell from Mel
+FeaturePlot_scCustom(seu, c('MS4A1','TNFRSF13C','CD19', 'LINC00926', 'TNFRSF13B',
+                            'PAX5', 'FCRLA', 'CD79A', 'TNFRSF17'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+# comment:
+# - from this plot, clusters 4,5,9,10,12 cells no proliferating B (PAX5, CD79A),
+# cluster 18 is plasma cell. Key gene: TNFRSF17
+
+# Dividing B cell from Mel
+FeaturePlot_scCustom(seu, c('PAX5', 'FCRLA', 'CD79A', 'TNFRSF17',"TYMS", "MKI67", "PCLAF", "NUSAP1", "RRM2"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+
+# Mast cell from HLCA
+FeaturePlot_scCustom(seu, c("PTPRC", "CORO1A", "MS4A2", "SLC18A2", "RGS13"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+# from this plot, cluster 10 is mast cell
+
+
+# pDC cell from HLCA
+FeaturePlot_scCustom(seu, c("SCT","SMPD3", "LILRA4"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, cluster 7 is pDC
+
+# Club cell from HLCA
+FeaturePlot_scCustom(seu, c("SERPINB3","TCN1", "ASRGL1","CYP2F1","SCGB3A1","BPIFB1",
+                            "GPX8", "ALDH1A3", "CEACAM5"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, cluster 6 is club or goblet cell
+
+# multiciliated cell from HLCA
+FeaturePlot_scCustom(seu, c("BEST4", "LYPD2","RSPH1","C20orf85","C9orf24"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, clusters 7,13,15 are ciliated cells
+
+# endothelial cell from HLCA & spatial
+FeaturePlot_scCustom(seu, c("CLDN5", "ECSCR","CLEC14A","SOSTDC1","DKK2","IGFBP3",
+                            'PECAM1'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# endothelial cell from Mel
+FeaturePlot_scCustom(seu, c("ACKR1","RAMP3","NNMT","CLDN5","SPARCL1"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from these plots, cluster 12 is endothelial cells.
+
+# migratory DC from Mel
+FeaturePlot_scCustom(seu, c("CCR7","LAMP3","LAD1","CCL22","IDO1"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, clusters 10 and 11 are migratory DC.
+
+# cDC1 from Mel
+FeaturePlot_scCustom(seu, c("CLEC9A","XCR1","LGALS2","CADM1","C1orf54"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# cDC1 from spatial
+FeaturePlot_scCustom(seu, c('CLEC9A', 'XCR1', 'C1orf54', 'WDFY4', 'LGALS2', 'DNASE1L3'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, cluster 17 is cDC1.
+
+# cDC2 from Mel
+FeaturePlot_scCustom(seu, c("CLEC10A","FPR3","CD1E","CD1C","FCER1A"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# cDC2 from spatial
+FeaturePlot_scCustom(seu, c('CD1C', 'CLEC10A', 'FCGR2B', 'FCER1A'), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from these plots, cluster 2,4,14 are cDC2.
+
+# Monocytes from Mel
+FeaturePlot_scCustom(seu, c("CD14","CSF1R","LILRB3","F13A1","VCAN"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# Neutrophil from Mel
+FeaturePlot_scCustom(seu, c("CR1","CD55","CLEC12A","CD48","HLA-DRA",
+                            "S100A8","S100A9","F13A1","VCAN","FCN1", "CD14"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     #split.by = seu.subset$condition,
+                     colors_use = magma(256))
+
+# comment:
+# - from this plot, no neutrophil is found.
+
+# Annotation for SCT_snn_res.1.4 231115
+Annotation <- setNames(c("cDC", #1 
+                    "cDC", #2
+                    "B", #3
+                    "Ciliated", #4 
+                    "B", #5 
+                    "Ciliated", #6 
+                    "Secretory", #7
+                    "pDC", #8
+                    "B", #9 
+                    "Migratory-DC", #10 
+                    "B", #11 
+                    "Migratory-DC", #12
+                    "Mast", #13
+                    "B", #14
+                    "Proliferating", #15
+                    "Endothelial" #16
+                    ), levels(seu$SCT_snn_res.1.4))
+
+Annotation <- Annotation[seu$SCT_snn_res.1.4]
+names(Annotation) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation, col.name = "Annotation")
+seu$Annotation <- factor(seu$Annotation)
+
+# save annotated object
+saveRDS(seu, file = "data/SCEs/ETI.others.integrated.subclustered.annotated.SEU.rds")
+
+# save annotated
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.others.diet.SEU.rds")
+
+```
+
+
+
+# Sub-clustering of macrophages
+Read object
+```{r}
+# read object
+seu <- readRDS(here('data/SCEs/ETI.mac.integrated.subclustered.SEU.rds'))
+
+# Check predictive score
+DefaultAssay(seu) <- "RNA"
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=inferno(256)) / 
+  DimPlot(seu, group.by = "predicted.ann_level_3", cols=colours) /
+  DimPlot(seu, group.by = "SCT_snn_res.0.8", cols = colours)
+
+ggsave(plot=last_plot(),
+       filename = here('data','figs',"mac.round1.predScore.231114.pdf"),
+       device="pdf",
+       height=12, width=6,
+       dpi=600)
+
+```
+
+Annotate SCT_snn_res.0.7
+```{r}
+# ==============================================================================
+# I am using dims=1:30 and SCT_snn_res.0.7 for annotation.
+# feature plot 
+DefaultAssay(seu) <- "RNA"
+
+# alvM cell from spatial
+FeaturePlot_scCustom(seu, c('MARCO', 'MCEMP1', 'INHBA', 'TREM1', 'ABHD5', 
+                            'PPARG', 'RETN', 'CD5L', 'FABP4', "VCAN", "FCN1","CD14"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+## Monocytes, MoM and AM from Schupp 2020
+schupp <- c("VCAN", "FCN1", "CD300E", "CD93", "NLRP3", 
+            "RNASE1", "FPR3", "SDS", "STARD13", "PMP22", 
+            "FABP4", "APOC1", "C1QB", "MSR1", "MARCO")
+
+FeaturePlot_scCustom(seu, schupp, 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+# from this plot, clusters 5 and 9 are RM
+
+## macro_T from Mel
+macro_T <- c("CD3G", "GZMA", "CD2", "TRBC2", "CCL5")
+FeaturePlot_scCustom(seu, macro_T, 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+# from this plot cluster 13 is AM-T
+
+## macro_CCL from Mel and spatial
+macro_CCL <- c("IL1B", "CCL20", "CCL4", "CXCL3", "CXCL2", "CXCL8", "NFKBIA", "NFKBIZ", "TNFAIP3")
+macro_CCL <- c('CCL4', 'CCL20', 'CCL4L2', 'CXCL3', 'CXCL8', 'IL1B', 'CXCL5', 'CXCL2')
+FeaturePlot_scCustom(seu, macro_CCL, 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+# from this plot, cluster 10 is AM-CCL
+
+## macro_MT from Mel and spatial
+macro_mt <- c('MT2A', 'MT1X', 'MT1G', 'MT1F', 'MT1H')
+FeaturePlot_scCustom(seu, macro_mt, 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+
+macro_alv <- c('MARCO', 'MCEMP1', 'INHBA', 'TREM1', 'ABHD5', 'PPARG', 'RETN', 'CD5L', 'FABP4')
+macro_mt <- c('MT2A', 'MT1X', 'MT1G', 'MT1F', 'MT1H')
+macro_chit1 <- c('SPP1', 'PLA2G7', 'FOLR2', 'SLC1A3', 'SDC2', 'CHIT1', 'OTOA')
+macro_int <- c('CXCL10', 'CXCL9', "CXCL11",'GBP1', 'GBP5','GBP4', 'GBP2', 
+               'PSTPIP2', 'SLAMF7', 'WARS',
+               'STAT1','GCH1', 'APOL3')
+macro_intra <- c('LILRB5','F13A1', 'STAB1', 'RNASE1', 'MAF', 'FOLR2', "LYVE1")
+
+macro_airway_CX3CR1 <- c('CX3CR1', 'RGS1', 'C3', 'PALD1', 'MEF2C', 'DOCK4',
+                         'EPB41L2', 'ADAM28', 'SERPINB9', 'ST6GAL1', 'FCGBP', 
+                         'SRGAP1', 'NFATC2', 'IGSF21', 'BCL2', 'SFMBT2', 'ATP8B4', 
+                         'INPP5D', 'SLC4A7', 'SIGLEC8', 'SIGLEC10', 'PLD4', 'HAMP')
+FeaturePlot_scCustom(seu, macro_chit1, 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+FeaturePlot_scCustom(seu, c("SCD","ABCA1"), 
+                     label = FALSE, na_color="#E0E0E0",
+                     na_cutoff = 0.00001,
+                     colors_use = magma(256))
+
+VlnPlot(seu,c("SCD","ABCA1"), group.by = "SCT_snn_res.0.7")
+
+# Annotation for SCT_snn_res.0.7 231115
+seu$SCT_snn_res.0.7 <- factor(seu$SCT_snn_res.0.7,
+                              levels=c("1","2","3","4","5","6","7","8","9",
+                                       "10","11","12","13","14","15","16","17"))
+Annotation <- setNames(c("AM", #1
+                         "AM", #2
+                         "AM-lipid", #3
+                         "AM", #4
+                         "RM", #5
+                         "AM", #6
+                         "RM", #7
+                         "AM-CCL", #8
+                         "AM", #9
+                         "Proliferating", #10
+                         "AM-MT", #11
+                         "AM", #12
+                         "AM", #13
+                         "AM", #14
+                         "AM", #15
+                         "AM-T", #16
+                         "AM" #17
+                         ), levels(seu$SCT_snn_res.0.7))
+
+Annotation <- Annotation[seu$SCT_snn_res.0.7]
+names(Annotation) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation, col.name = "Annotation")
+seu$Annotation <- factor(seu$Annotation)
+
+#===============================================================================
+# save annotated object
+saveRDS(seu, file = "data/SCEs/ETI.mac.integrated.subclustered.annotated.SEU.rds")
+
+# save annotated
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.mac.diet.SEU.rds")
+
+```
+
+
+
+# Combine objects
+```{r}
+seu1 <- readRDS(here('data/SCEs/ETI.tcell.diet.SEU.rds'))
+seu2 <- readRDS(here('data/SCEs/ETI.others.diet.SEU.rds'))
+
+# remove SCT_snn_res.1.1 to 3.0
+seu2@meta.data <- seu2@meta.data[,c(1:61,82)]
+
+# check dim
+dim(seu1@meta.data)
+dim(seu2@meta.data)
+dim(seu3@meta.data)
+
+#seu3 <- readRDS(here('data/SCEs/ETI.mac.diet.SEU.rds'))
+seu3 <- seu.diet
+
+seu <- merge(seu1, y = c(seu2, seu3))
+dim(seu)
+
+# save diet object
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu, assays = "RNA", dimreducs = NULL, graphs = NULL)
+saveRDS(seu.diet, file = "data/SCEs/ETI.combined.diet.SEU.rds")
+
+# save object
+saveRDS(seu, file = here('data/SCEs/ETI.combined.SEU.rds'))
+
+```
+
+
+# After integration and sub-clustering...
+
+Read combined object
+```{r}
+seu <- readRDS(here('data/SCEs/ETI.combined.integrated.subclustered.SEU.rds'))
+
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+seu$Annotation <- factor(seu$Annotation)
+
+# Check predictive score
+FeaturePlot(seu, features="predicted.ann_level_3.score", cols=magma(256)) / 
+  DimPlot(seu, group.by = "Annotation", cols = colours)
+```
+
+Assign info
+```{r}
+# add Broad again, which includes a proliferating cluster, and combines epi & endo
+Broad <- setNames(c(rep("AM",5),
+                    "B",
+                    rep("CD4-T",2),
+                    "CD8-T",
+                    "cDC",
+                    rep("Epithelial & Endothelial",2),
+                    "Mast",
+                    "Migratory-DC",
+                    "NK",
+                    "NK-T",
+                    "pDC",
+                    "Proliferating",
+                    "RM",
+                    "Epithelial & Endothelial",
+                    "γδ-T"
+                    ), levels(seu$Annotation))
+Broad <- Broad[seu$Annotation]
+names(Broad) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Broad, col.name = "Broad")
+levels(factor(seu$Broad))
+seu$Broad <- factor(seu$Broad, levels=c("AM","RM","cDC","pDC","Migratory-DC",
+                                        "CD4-T","CD8-T","γδ-T","NK-T","NK","B",
+                                        "Mast","Proliferating",
+                                        "Epithelial & Endothelial"))
+
+DimPlot(seu, group.by = "Broad", cols = colours)
+
+# Reorder ID level 
+seu$ID <- factor(seu$ID, levels=c("M1C188.t1","M1C188.t2",
+                                  "M1C160.t1","M1C160.t2",
+                                  "M1C177.t1","M1C177.t2",
+                                  "M1C170a.t1","M1C170b.t1","M1C170.t2",
+                                  "M1C176a.t1","M1C176b.t1","M1C176.t2",
+                                  "M1C180.t1","M1C180.t2",
+                                  "M1N092","M1N075"))
+
+# Assign Sample
+Sample <- setNames(c("M1C188.t1","M1C188.t2",
+                     "M1C160.t1","M1C160.t2",
+                     "M1C177.t1","M1C177.t2",
+                     rep("M1C170.t1",2),"M1C170.t2",
+                     rep("M1C176.t1",2),"M1C176.t2",
+                     "M1C180.t1","M1C180.t2",
+                     "M1N092","M1N075"),levels(seu$ID))
+
+Sample <- Sample[seu$ID]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                     levels=c("M1C188.t1","M1C188.t2",
+                              "M1C160.t1","M1C160.t2",
+                              "M1C177.t1","M1C177.t2",
+                              "M1C170.t1","M1C170.t2",
+                              "M1C176.t1","M1C176.t2",
+                              "M1C180.t1","M1C180.t2",
+                              "M1N092","M1N075"))
+
+# Assign Subject
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "ETI3","ETI3",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "UT3","UT3",
+                      "HC1","HC2"),levels(seu$Sample))
+
+Subject <- Subject[seu$Sample]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                      levels=c("ETI1","ETI2","ETI3",
+                               "UT1","UT2","UT3",
+                               "HC1","HC2"))
+
+# Assign Timepoint
+Timepoint <- setNames(c(rep(c("T1","T2"),6),
+                        rep("N/A",2)), levels(seu$Sample))
+Timepoint <- Timepoint[seu$Sample]
+names(Timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                        levels=c("T1","T2","N/A"))
+
+# Assign Condition1
+Condition1 <- setNames(c(rep(c("ETI-treated_t1", "ETI-treated_t2"),3),
+                         rep(c("ETI-untreated_t1", "ETI-untreated_t2"),3),
+                         rep("Healthy",2)), levels(seu$Sample))
+Condition1 <- Condition1[seu$Sample]
+names(Condition1) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Condition1, col.name = "Condition1")
+seu$Condition1 <- factor(seu$Condition1,
+                         levels=c("ETI-treated_t1","ETI-treated_t2",
+                                  "ETI-untreated_t1", "ETI-untreated_t2",
+                                  "Healthy"))
+
+# Assign Condition2
+Condition2 <- setNames(c(rep("ETI-treated",6), # Trikafta indiv as treated
+                         rep("ETI-untreated",6),
+                         rep("Healthy",2)), levels(seu$Sample))
+Condition2 <- Condition2[seu$Sample]
+names(Condition2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Condition2, col.name = "Condition2")
+seu$Condition2 <- factor(seu$Condition2,
+                         levels=c("ETI-treated","ETI-untreated","Healthy"))
+
+
+```
+
+Save object for downstream analysis
+```{r}
+saveRDS(seu, file=here('data','SCEs','ETI.combined.analysis.SEU.rds'))
+
+```
+
+Fig1b Combined UMAP
+```{r}
+# seu <- readRDS(here('data','SCEs','ETI.combined.analysis.SEU.rds'))
+# # UMAP
+# colours <- c("#a2d2ff", "#564592", "#f77f00", "#3a5a40", "#7f7f7f","#8d0801","#fb6f92", "#14213d")
+# DimPlot(seu,
+#         group.by = "Broad", 
+#         # order = c("T & NK","Mast","recMo/MΦ","DC","alvMΦ","B",
+#         #           "Epithelial & Endothelial","proliferating"),
+#         label.size=3,
+#         label=FALSE,
+#         repel=TRUE,
+#         split.by="condition2",
+#         #combine = FALSE, 
+#         ncol = 5,
+#         cols = Broad.colours) + #+ NoLegend()
+#   ggtitle("Major cell type") +
+#   scale_x_continuous(breaks = c(-5, 0, 5, 10))
+# 
+# ggsave(plot=last_plot(),
+#        filename = "combined.Broad.UMAP.230628.jpeg",
+#        device="jpeg",
+#        height=6, width=12,
+#        dpi=600)
+# 
+# # UMAP for Broad2 - Fig. 1b
+# Broad2.colours <- setNames(c("#004e98", #AM
+#                              #"#a2d2ff", #AM
+#                              "#fb6f92", #RM
+#                              "#f77f00", # macrophage, DC
+#                              "#3a5a40", #CD4
+#                              "#81b29a", #CD8
+#                              "#4f772d", #gmT
+#                              "#a3b18a", # NK-T
+#                              "#dda15e", # NK
+#                              "#5a189a", # B
+#                              #"#fff056", # Mast
+#                              "#452103", # Mast
+#                              #"#b76935", # Proliferating
+#                              "#b23a48", # Proliferating
+#                              "#7f7f7f"), levels(seu$Broad2))
+# 
+# DimPlot(seu, #pt.size = 0.4,
+#         group.by="Broad2",
+#         #group.by = "Annotation", 
+#         label.size=3,
+#         label.box = FALSE,
+#         label=FALSE,
+#         repel=TRUE,
+#         split.by="condition2",
+#         #combine = FALSE, 
+#         #ncol = 5,
+#         cols = Broad2.colours) +
+#   #ggtitle("Cell type") +
+#   scale_x_continuous(breaks = c(-10, 0, 10))
+#   theme(plot.title = element_blank())
+#   #scale_y_continuous(breaks = c(-20, -10, 0, 10))
+
+# ggsave(plot=last_plot(),
+#        filename = "combined.Broad2.UMAP.230628.jpeg",
+#        device="jpeg",
+#        height=6, width=12,
+#        dpi=600)
+
+# UMAP for Broad3 - Fig. 1b
+Broad.colours <- setNames(c("#81a4cd", #AM
+                             "#fb6f92", #RM
+                             "#f77f00", #cDC
+                             "#b23a48", # pDC
+                             "#054a91", # Migratory DC
+                             "#3a5a40", #CD4
+                             "#a3b18a", #CD8
+                             "#0e9594", #gmT
+                             "#81b29a", # NK-T
+                             "#dda15e", # NK
+                             "#5a189a", # B
+                             "#000000", # Mast
+                             "#7d451b", # Proliferating
+                             "#6c757d"), levels(seu$Broad))
+
+f1b <- DimPlot(seu, #pt.size = 0.4,
+        group.by="Broad",
+        label.size=2,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        split.by="Condition2",
+        cols = Broad.colours
+        ) +
+  scale_x_continuous(breaks = c(-10, 0, 10)) +
+  scale_fill_manual(values=Broad.colours,
+                     breaks = rev(levels(seu$Broad))) +
+  theme(plot.title = element_blank(),
+        text = element_text(family="Ariel"),
+        axis.text = element_text(size=8),
+        axis.title.y=element_text(vjust=-25,
+                                  size=10),
+        axis.title.x=element_text(#vjust=10,
+                                  size=10),
+        legend.text = element_text(size = 10),
+        #legend.spacing.y = unit(0.0001,"cm"),
+        #legend.key.size=unit(0.01,"pt"),
+        strip.text.x = element_text(face = "bold", vjust=2, size=12))
+
+# seu@reductions$umap@cell.embeddings[,1] <- -seu@reductions$umap@cell.embeddings[,1]
+
+
+f1b
+
+DimPlot(seu, #pt.size = 0.4,
+        group.by="Broad",
+        label.size=2,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        split.by="ID",
+        cols = Broad.colours,shuffle = TRUE,ncol = 4
+        ) +
+  scale_x_continuous(breaks = c(-10, 0, 10)) +
+  scale_fill_manual(values=Broad.colours,
+                     breaks = rev(levels(seu$Broad))) +
+  theme(plot.title = element_blank(),
+        text = element_text(family="Ariel"),
+        axis.text = element_text(size=8),
+        axis.title.y=element_text(#vjust=-25,
+                                  size=10),
+        axis.title.x=element_text(#vjust=10,
+                                  size=10),
+        legend.text = element_text(size = 10),
+        #legend.spacing.y = unit(0.0001,"cm"),
+        #legend.key.size=unit(0.01,"pt"),
+        strip.text.x = element_text(face = "bold", vjust=2, size=12))
+
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1000,
+       filename = "compare.UMAP.jpeg",
+       height=8,
+       width=10)
+
+
+props <- getTransformedProps(clusters=seu$Broad,
+                             sample=seu$ID,
+                             transform = "asin")
+props$Proportions %>%
+  data.frame %>%
+  #inner_join(info, by = c("sample" = "orig.ident")) %>%
+  ggplot(aes(x = sample, y = Freq, fill = clusters)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #ggtitle("Cell type proportion: integrated_snn_res.0.5") +
+  theme(axis.text.x = element_text(angle = 45,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size=8,
+                                   colour = "black"),
+        axis.text.y = element_text(size=8,
+                                   colour = "black"),
+        #plot.title = element_text(hjust=0.5, face="bold"),
+        legend.text = element_text(size = 10),
+        #legend. = element_rect(size=6),
+        legend.title = element_text(face="bold", size=12)) +
+  #labs( y = "Proportion", fill = "Cell Label") +
+  labs( y = "Proportion", fill="Cell type", x="Sample") +
+  guides(fill = guide_legend(#override.aes = list(size = 0.01),
+                             keyheight=1.2,
+                             keywidth=1.2)) +
+  scale_fill_manual(values = Broad.colours)
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1000,
+       filename = "compare.prop.jpeg",
+       height=8,
+       width=10)
+
+```
+
+Color macrophage only (Plot for presentation) 230919
+```{r}
+Broad3.colours <- setNames(c("#81a4cd", #AM
+                             "#fb6f92", #RM
+                             "#f77f00", #cDC
+                             "#b23a48", # pDC
+                             "#054a91", # Migratory DC
+                             "#3a5a40", #CD4
+                             "#a3b18a", #CD8
+                             "#0e9594", #gmT
+                             "#81b29a", # NK-T
+                             "#dda15e", # NK
+                             "#5a189a", # B
+                             #"#fff056", # Mast
+                             "#000000", # Mast
+                             #"#b76935", # Proliferating
+                             "#7d451b", # Proliferating
+                             "#6c757d"), levels(seu$Broad3))
+
+f1b <- DimPlot(seu, #pt.size = 0.4,
+        group.by="Broad3",
+        label.size=2,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        #split.by="condition2",
+        cols = Broad3.colours) +
+  scale_x_continuous(breaks = c(-10, 0, 10)) +
+  scale_fill_manual(values=Broad3.colours,
+                     breaks = rev(levels(seu$Broad3))) +
+  theme(plot.title = element_blank(),
+        text = element_text(family="Ariel"),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        #legend.spacing.y = unit(0.0001,"cm"),
+        #legend.key.size=unit(0.01,"pt"),
+        strip.text.x = element_text(face = "bold", vjust=2, size=12))
+f1b
+
+Broad3.colours <- setNames(c("#81a4cd", #AM
+                             "#fb6f92", #RM
+                             "#e5e5e5", #cDC
+                             "#e5e5e5", # pDC
+                             "#e5e5e5", # Migratory DC
+                             "#e5e5e5", #CD4
+                             "#e5e5e5", #CD8
+                             "#e5e5e5", #gmT
+                             "#e5e5e5", # NK-T
+                             "#e5e5e5", # NK
+                             "#e5e5e5", # B
+                             #"#fff056", # Mast
+                             "#e5e5e5", # Mast
+                             #"#b76935", # Proliferating
+                             "#e5e5e5", # Proliferating
+                             "#e5e5e5"), levels(seu$Broad3))
+
+f1c <- DimPlot(seu, #pt.size = 0.4,
+        group.by="Broad3",
+        label.size=2,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        #split.by="condition2",
+        cols = Broad3.colours) +
+  scale_x_continuous(breaks = c(-10, 0, 10)) +
+  scale_fill_manual(values=Broad3.colours,
+                     breaks = rev(levels(seu$Broad3))) +
+  theme(plot.title = element_blank(),
+        text = element_text(family="Ariel"),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        #legend.spacing.y = unit(0.0001,"cm"),
+        #legend.key.size=unit(0.01,"pt"),
+        strip.text.x = element_text(face = "bold", vjust=2, size=12)) #+ NoLegend()
+f1c
+
+layout = "AAAA\nBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+f1b +
+  f1c +
+  plot_layout(design = layout) +
+  #plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1200,
+       filename = "slide11.230919.jpeg",
+       height=12,
+       width=8)
+
+```
+
+Fig S2. CFTR expression
+```{r}
+DefaultAssay(seu) <- "RNA"
+seu <- NormalizeData(seu)
+seu <- ScaleData(seu)
+Idents(seu) <- "Broad3"
+fs2 <- FeaturePlot(seu,
+                   slot="scale.data",
+                   features="CFTR",
+                   label = TRUE, 
+                   repel = TRUE,
+                   label.size = 2,
+                   #pt.size = 0.3,
+                   order=TRUE,
+                   #split.by="condition2",
+                   #cols = c("#e7ecef","#c1121f")
+                   ) +
+  scale_color_gradientn(colors = brewer.orrd(6), 
+                       breaks=c(0,5,10)) +
+  scale_x_continuous(breaks = c(-10, 0, 10)) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))
+
+layout = "AABB\nAABB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1600)
+fs2 + 
+  (ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave("FigS2.230905.jpeg",
+       device="jpeg",
+       dpi=1400,
+       height=6,width=12)
+
+# plot CFTR %
+CFTR.df <- data.frame(Barcode=rownames(seu@meta.data),
+                      CFTR = seu@assays$RNA@counts["CFTR",],
+                      Broad = seu$Broad3,
+                      Condition=seu$condition2,
+                      Subject=seu$Subject,
+                      Sample=seu$Sample,
+                      Timepoint=seu$Timepoint)
+
+CFTR.df <- CFTR.df %>% mutate(CFTR.positive = case_when(
+  CFTR != 0 ~ "Y",
+  CFTR == 0 ~ "N"
+))
+
+ggplot(CFTR.df, aes(x=Broad3, fill=CFTR.positive)) +
+  geom_bar(stat="count", position="fill") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y="Percentage of CFTR+ cells",
+       x=NULL) +
+  theme(axis.text.x=element_text(angle=45))
+
+CFTR.df %>%
+  group_by(Condition, Broad, CFTR.positive) %>%
+  summarize(n = n()) %>% write.csv("cftr.exp.csv",row.names = FALSE)
+
+head(CFTR.df)
+# CFTR+ in ETI-treated T1
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1"))
+
+# CFTR+ in ETI-treated T2
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2"))
+
+# CFTR+ in CF-untreated T1
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1"))
+
+# CFTR+ in CF-untreated T2
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2"))
+
+# CFTR+ in Healthy
+nrow(CFTR.df %>% dplyr::filter(Condition == "Healthy" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "Healthy"))
+
+CFTR.condition.df <- data.frame(CFTR.pct = c(0.03867925,0.1919127,0.127572,0.1144353),
+                           Condition = c("ETI-treated", "ETI-treated", "CF-untreated", "CF-untreated"),
+                           Timepoint = c("T1","T2","T1","T2"))
+
+CFTR.condition.df$Condition <- factor(CFTR.condition.df$Condition,
+                                 levels=c("ETI-treated", "CF-untreated"))
+
+
+ggplot(CFTR.condition.df, aes(x=Condition, y=CFTR.pct, fill=Timepoint)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y="Percentage of CFTR+ seus",
+       x=NULL)
+
+
+vec <- c()
+for (i in levels(CFTR.df$Sample)) {
+  a <- nrow(CFTR.df %>% dplyr::filter(Sample == i & CFTR > 0)) / nrow(CFTR.df %>% dplyr::filter(Sample == i))
+  vec <- c(vec, a)
+}
+```
+
+Fig1c Combined marker gene dotplot
+```{r}
+# Cepo marker gene
+DefaultAssay(seu) <- "RNA"
+seu <- NormalizeData(seu)
+
+cepoMarkers <- Cepo(seu[["RNA"]]@data, 
+                   seu$Broad, 
+                   exprsPct = 0.1)
+cepoMarkers$stats
+cepoMarkers$stats <- cepoMarkers$stats[,c("AM","RM","cDC","pDC","Migratory.DC","CD4.T","CD8.T",
+                                           "γδ.T","NK.T","NK","B","Mast",
+                                           "Proliferating","Epithelial...Endothelial")]
+cepoMarkers$stats <- cepoMarkers$stats[!grepl('^A[C|P]0', row.names(cepoMarkers$stats)),] # remove AC or AP genes
+
+sapply(1:ncol(cepoMarkers$stats), function(i){
+  names(sort(cepoMarkers$stats[,i], decreasing = TRUE))[1:30]
+}) -> dat
+
+colnames(dat) <- colnames(cepoMarkers$stats)
+dat %>% knitr::kable()
+
+# Cepo marker gene heatmap
+maxGenes <- 5
+sigGenes <- lapply(1:ncol(dat), function(i){
+  dat[,i][1:maxGenes]
+})
+
+sig <- unlist(sigGenes)
+
+geneCols <- rep(Broad.colours, 
+                each = maxGenes)[1:length(sig)][!duplicated(sig)]
+
+DefaultAssay(seu) <- "RNA"
+seu$Broad <- factor(seu$Broad, levels=rev(levels(seu$Broad)))
+f1c <- DotPlot(seu,    
+        features = sig[!duplicated(sig)],
+        group.by = "Broad",
+        cols=cividis(256),
+        col.max = 3,
+        col.min = -1,
+        dot.scale = 5) + 
+  FontSize(y.text = 10, x.text = 8) + 
+  labs(y = element_blank(), x = element_blank()) + 
+  theme(text=element_text(family="Ariel"),
+        axis.text.x = element_text(#color = geneCols,
+                                   size=8,
+                                   face="italic",
+                                   angle = 90,
+                                   hjust = 1,
+                                   vjust = 1),
+        axis.text.y = element_text(color=rev(Broad.colours),
+                                   size=10,
+                                   face="plain"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 10),
+        ) +
+  scale_color_gradient2(low = "#f5f3f4", 
+                        mid = "#ff8fa3", 
+                        high = "#c9184a")
+
+
+
+f1c
+```
+
+Fig1d Macrophage UMAP
+```{r}
+seu <- readRDS(here("data","SCEs","obsolete","ETI.mac.integrated.subclustered.annotated.SEU.rds"))
+
+# Reorder ID level 
+seu$ID <- factor(seu$ID, levels=c("M1C188.t1","M1C188.t2",
+                                  "M1C160.t1","M1C160.t2",
+                                  "M1C177.t1","M1C177.t2",
+                                  "M1C170a.t1","M1C170b.t1","M1C170.t2",
+                                  "M1C176a.t1","M1C176b.t1","M1C176.t2",
+                                  "M1C180.t1","M1C180.t2",
+                                  "M1N092","M1N075"))
+
+# Assign Sample
+Sample <- setNames(c("M1C188.t1","M1C188.t2",
+                     "M1C160.t1","M1C160.t2",
+                     "M1C177.t1","M1C177.t2",
+                     rep("M1C170.t1",2),"M1C170.t2",
+                     rep("M1C176.t1",2),"M1C176.t2",
+                     "M1C180.t1","M1C180.t2",
+                     "M1N092","M1N075"),levels(seu$ID))
+
+Sample <- Sample[seu$ID]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                     levels=c("M1C188.t1","M1C188.t2",
+                              "M1C160.t1","M1C160.t2",
+                              "M1C177.t1","M1C177.t2",
+                              "M1C170.t1","M1C170.t2",
+                              "M1C176.t1","M1C176.t2",
+                              "M1C180.t1","M1C180.t2",
+                              "M1N092","M1N075"))
+
+# Assign Subject
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "ETI3","ETI3",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "UT3","UT3",
+                      "HC1","HC2"),levels(seu$Sample))
+
+Subject <- Subject[seu$Sample]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                      levels=c("ETI1","ETI2","ETI3",
+                               "UT1","UT2","UT3",
+                               "HC1","HC2"))
+
+# Assign Timepoint
+Timepoint <- setNames(c(rep(c("T1","T2"),6),
+                        rep("N/A",2)), levels(seu$Sample))
+Timepoint <- Timepoint[seu$Sample]
+names(Timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                        levels=c("T1","T2","N/A"))
+
+# Assign Condition1
+Condition1 <- setNames(c(rep(c("ETI-treated_t1", "ETI-treated_t2"),3),
+                         rep(c("ETI-untreated_t1", "ETI-untreated_t2"),3),
+                         rep("Healthy",2)), levels(seu$Sample))
+Condition1 <- Condition1[seu$Sample]
+names(Condition1) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Condition1, col.name = "Condition1")
+seu$Condition1 <- factor(seu$Condition1,
+                         levels=c("ETI-treated_t1","ETI-treated_t2",
+                                  "ETI-untreated_t1", "ETI-untreated_t2",
+                                  "Healthy"))
+
+# Assign Condition2
+Condition2 <- setNames(c(rep("ETI-treated",6), # Trikafta indiv as treated
+                         rep("ETI-untreated",6),
+                         rep("Healthy",2)), levels(seu$Sample))
+Condition2 <- Condition2[seu$Sample]
+names(Condition2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Condition2, col.name = "Condition2")
+seu$Condition2 <- factor(seu$Condition2,
+                         levels=c("ETI-treated","ETI-untreated","Healthy"))
+
+
+# UMAP for Annotation - Fig. 1c
+# flip UMAP
+seu@reductions$umap@cell.embeddings[,1] <- -seu@reductions$umap@cell.embeddings[,1]
+seu@reductions$umap@cell.embeddings[,2] <- -seu@reductions$umap@cell.embeddings[,2]
+
+# reorder Annotation
+seu$Annotation <- factor(seu$Annotation, levels=c("AM",
+                                                  "RM",
+                                                  "Proliferating",
+                                                  "AM-CCL",
+                                                  "AM-lipid",
+                                                  "AM-MT",
+                                                  "AM-T"))
+
+# add updated annotation
+Annotation2 <- setNames(c("AM",
+                         "RM",
+                         "AM-proliferating",
+                         "AM-CCL",
+                         "AM-lipid",
+                         "AM-MT",
+                         "AM-T"), levels(seu$Annotation))
+Annotation2 <- Annotation2[seu$Annotation]
+names(Annotation2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation2, col.name = "Annotation2")
+seu$Annotation2 <- factor(seu$Annotation2, 
+                          levels=c("AM",
+                                   "RM",
+                                   "AM-proliferating",
+                                   "AM-CCL",
+                                   "AM-IFN",
+                                   "AM-lipid",
+                                   "AM-MT",
+                                   "AM-T")) 
+Annotation.colours <- setNames(c("#81a4cd", #AM
+                             "#fb6f92", #recMo/MΦ
+                             "#7d451b", #AM-proliferating
+                             "#f77f00", #AM-CCL
+                             "#b23a48", # AM-IFN
+                             "#054a91", #AM-lipid
+                             "#5a189a", #AM-MT
+                             "#a3b18a" #AM-T
+                             ), levels(seu$Annotation2))
+
+f1d <- DimPlot(seu, #pt.size = 0.4,
+        group.by="Annotation2",
+        # order=c("CD4-T","CD8-T","γδ-T","NK-T","NK",
+        #         "recMo/MΦ","alvMΦ",
+        #         "cDC","pDC","Migratory-DC",
+        #         "B", "Mast", "Proliferating", "Epithelial & Endothelial"),
+        #group.by = "Annotation", 
+        label.size=3,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        split.by="Condition2",
+        #combine = FALSE, 
+        #ncol = 5,
+        cols = Annotation.colours) + NoLegend() +
+  #ggtitle("Cell type") +
+  scale_x_continuous(breaks = c(-5, 0, 5)) +
+  scale_color_manual(values=Annotation.colours) +
+  theme(plot.title = element_blank(),
+        text=element_text(family="Ariel"),
+        #axis.text = element_blank(),
+        #axis.title = element_blank(),
+        #axis.ticks = element_blank(),
+        #axis.line = element_blank(),
+        axis.text = element_text(size=8),
+        axis.title.y=element_text(vjust=-1,
+                                  size=10),
+        axis.title.x=element_text(#vjust=10,
+                                  size=10),
+        legend.text = element_text(size = 10),
+        strip.text.x = element_text(face = "bold", vjust=2, size=12))
+
+f1d
+```
+
+Fig 3
+```{r}
+Annotation.colours <- setNames(c("#e5e5e5", #AM
+                             "#fb6f92", #recMo/MΦ
+                             "#e5e5e5", #AM-proliferating
+                             "#e5e5e5", #AM-CCL
+                             "#e5e5e5", # AM-IFN
+                             "#e5e5e5", #AM-lipid
+                             "#e5e5e5", #AM-MT
+                             "#e5e5e5" #AM-T
+                             ), levels(seu$Annotation2))
+
+f3a <- DimPlot(seu, #pt.size = 0.4,
+        group.by="Annotation2",
+        # order=c("CD4-T","CD8-T","γδ-T","NK-T","NK",
+        #         "recMo/MΦ","alvMΦ",
+        #         "cDC","pDC","Migratory-DC",
+        #         "B", "Mast", "Proliferating", "Epithelial & Endothelial"),
+        #group.by = "Annotation", 
+        label.size=3,
+        label.box = FALSE,
+        label=FALSE,
+        repel=TRUE,
+        #split.by="condition2",
+        #combine = FALSE, 
+        #ncol = 5,
+        cols = Annotation.colours) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        plot.title = element_blank(),
+        text=element_text(family="Ariel"),
+        axis.text = element_blank(),
+        axis.title=element_blank()) + NoLegend()
+f3a
+ggsave(filename="f3a.umap.jpeg",
+       dpi=600,
+       height=4, width=4)
+```
+
+Fig1e Cell proportion per individual (either grouped or stacked bar plot)
+```{r}
+
+# add Sample2 to seu
+Sample2 <- setNames(c("ETI1.t1","ETI1.t2",
+                      "ETI2.t1","ETI2.t2",
+                      "ETI3.t1","ETI3.t2",
+                      "UT1.t1","UT1.t2",
+                      "UT2.t1","UT2.t2",
+                      "UT3.t1","UT3.t2",
+                      "HC1","HC2"),levels(seu$Sample))
+
+Sample2 <- Sample2[seu$Sample]
+names(Sample2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample2, col.name = "Sample2")
+seu$Sample2 <- factor(seu$Sample2,
+                          levels=c("ETI1.t1","ETI1.t2",
+                      "ETI2.t1","ETI2.t2",
+                      "ETI3.t1","ETI3.t2",
+                      "UT1.t1","UT1.t2",
+                      "UT2.t1","UT2.t2",
+                      "UT3.t1","UT3.t2",
+                      "HC1","HC2"))
+
+props <- getTransformedProps(clusters=seu$Annotation2,
+                             sample=seu$Sample2,
+                             transform = "asin")
+f1e <- props$Proportions %>%
+  data.frame %>%
+  #inner_join(info, by = c("sample" = "orig.ident")) %>%
+  ggplot(aes(x = sample, y = Freq, fill = clusters)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #ggtitle("Cell type proportion: integrated_snn_res.0.5") +
+  theme(axis.text.x = element_text(angle = 45,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size=8,
+                                   colour = "black"),
+        axis.text.y = element_text(size=8,
+                                   colour = "black"),
+        #plot.title = element_text(hjust=0.5, face="bold"),
+        legend.text = element_text(size = 10),
+        #legend. = element_rect(size=6),
+        legend.title = element_text(face="bold", size=12)) +
+  #labs( y = "Proportion", fill = "Cell Label") +
+  labs( y = "Proportion", fill="Subtype", x="Sample") +
+  guides(fill = guide_legend(#override.aes = list(size = 0.01),
+                             keyheight=1.2,
+                             keywidth=1.2)) +
+  scale_fill_manual(values = Annotation.colours)
+
+f1e
+# stacked bar plot for proportion of monocytes and MoM
+s <- subset(seu, Annotation == "RM")
+
+# rename 
+vec <- gsub('Monocytes','Mo',s$predicted.ann_level_3)
+vec <- gsub('Macrophages','MoM',vec)
+names(vec) <- names(s$predicted.ann_level_3)
+vec <- factor(vec,
+              levels=c("MoM","Mo"))
+# calculate proportion
+props <- getTransformedProps(clusters=vec,
+                             sample=s$Sample2,
+                             transform = "asin")
+
+Sf1 <- props$Proportions %>%
+  data.frame %>%
+  #inner_join(info, by = c("sample" = "orig.ident")) %>%
+  ggplot(aes(x = sample, y = Freq, fill = clusters)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #ggtitle("Cell type proportion: integrated_snn_res.0.5") +
+  theme(text = element_text(family = "Ariel"),
+        axis.text.x = element_text(angle = 45,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size=8,
+                                   colour = "black"),
+        axis.text.y = element_text(size=8,
+                                   colour = "black"),
+        #plot.title = element_text(hjust=0.5, face="bold"),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        #legend. = element_rect(size=6),
+        legend.title = element_text(face="bold", size=12)) +
+  #labs( y = "Proportion", fill = "Cell Label") +
+  labs( y = "Proportion", fill="RM cluster", x="Sample") +
+  guides(fill = guide_legend(#override.aes = list(size = 0.01),
+                             keyheight=1.2,
+                             keywidth=1.2)) +
+  scale_fill_manual(values = c("#ffdab9","#ff8fab"))
+
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 600)
+Sf1
+ggsave(plot=last_plot(),
+       filename = "Sf1.23118.jpeg",
+       device="jpeg",
+       dpi=600,
+       height=4, width=6)
+
+```
+
+Fig1f Macrophage marker gene heatmap
+```{r}
+# Normalize data
+# seu <- NormalizeData(seu)
+
+# Cepo marker gene
+cepoMarkers <- Cepo(seu[["RNA"]]@data, 
+                   seu$Annotation2, 
+                   exprsPct = 0.2)
+cepoMarkers$stats
+cepoMarkers$stats <- cepoMarkers$stats[, c("AM","RM","AM.proliferating",
+                                           "AM.CCL","AM.lipid",
+                                           "AM.MT","AM.T")]
+cepoMarkers$stats <- cepoMarkers$stats[!grepl('^A[C|F|P|L][0|1]', row.names(cepoMarkers$stats)),]
+
+sapply(1:ncol(cepoMarkers$stats), function(i){
+  names(sort(cepoMarkers$stats[,i], decreasing = TRUE))[1:20]
+}) -> dat
+
+colnames(dat) <- colnames(cepoMarkers$stats)
+dat %>% knitr::kable()
+
+# # FindMarker marker gene
+# seuMarkers <- read.csv(here('data_230628/SCEs/mac.markers.csv'))
+# seuMarkers %>%
+#     group_by(cluster) %>%
+#     top_n(n = 5, wt = avg_log2FC)
+# 
+# DoHeatmap(pbmc, features = top10$gene) + NoLegend()
+
+# Cepo marker gene heatmap
+maxGenes <- 5
+sigGenes <- lapply(1:ncol(dat), function(i){
+  dat[,i][1:maxGenes]
+})
+# sigGenes[[2]] <- c("VCAN","FCN1","C15orf48","MARCKS","PLA2G7")
+# sigGenes[[1]] <- c("GPD1","SLC19A3","GAPLINC","PPIC","CPE")
+sig <- unlist(sigGenes)
+
+geneCols <- rep(Annotation.colours, 
+                each = maxGenes)[1:length(sig)][!duplicated(sig)]
+
+# Calculate averaged expression
+cell.avg <- AverageExpression(seu,
+                              group.by = c("Sample","Annotation2"),
+                              slots="data",
+                              assays = "RNA",
+                              features = sig[!duplicated(sig)],
+                              return.seurat = TRUE)
+
+# add Annotation to metadata
+cell.avg$Annotation2 <- factor(unlist(map(strsplit(rownames(cell.avg@meta.data),"_"),2)),
+                              levels = c("AM",
+                                         "RM",
+                                         "AM-proliferating",
+                                         "AM-CCL",
+                                         "AM-lipid",
+                                         "AM-MT",
+                                         "AM-T"))
+
+# add Mac subtype
+CellType <- setNames(cell.avg$Annotation2,colnames(cell.avg))
+cell.avg <- AddMetaData(cell.avg,metadata = CellType, col.name = "Subtype")
+cell.avg$Subtype <- factor(unlist(map(strsplit(rownames(cell.avg@meta.data),"_"),2)),
+                              levels = c("AM",
+                                         "RM",
+                                         "AM-proliferating",
+                                         "AM-CCL",
+                                         "AM-IFN",
+                                         "AM-lipid",
+                                         "AM-MT",
+                                         "AM-T"))
+
+# add Sample to metadata
+cell.avg$Sample <- factor(unlist(map(strsplit(rownames(cell.avg@meta.data),"_"),1)),
+                                levels=levels(seu$Sample))
+
+# add subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "ETI3","ETI3",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "UT3","UT3",
+                      "HC1","HC2"),levels(cell.avg$Sample))
+
+Subject <- Subject[cell.avg$Sample]
+names(Subject) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Subject, col.name = "Subject")
+cell.avg$Subject <- factor(cell.avg$Subject,
+                          levels=c("ETI1","ETI2","ETI3",
+                                   "UT1","UT2","UT3",
+                                   "HC1","HC2"))
+
+# add condition1 to metadata
+Condition <- setNames(c(rep("CF",12), # Trikafta indiv as treated
+                         rep("Healthy",2)), levels(cell.avg$Sample))
+Condition <- Condition[cell.avg$Sample]
+names(Condition) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Condition, col.name = "Condition")
+cell.avg$Condition <- factor(cell.avg$Condition)
+
+# add timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),6),
+                         rep("N/A",2)), levels(cell.avg$Sample))
+Timepoint <- Timepoint[cell.avg$Sample]
+names(Timepoint) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Timepoint, col.name = "Timepoint")
+cell.avg$Timepoint <- factor(cell.avg$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# heatmap using dittoSeq
+# Condition.colors <- setNames(c("#a4133c","#fb8b24","#5b8e7d"),
+#                               levels(cell.avg$Condition))
+
+Condition.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              levels(cell.avg$Condition))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16,18)],
+                           kelly(22)[c(3,15,21)],
+                           kelly(22)[c(19,10)]),
+                           levels(cell.avg$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(cell.avg$Timepoint))
+
+Sample.colors <- setNames(kelly(22)[3:16],
+                          levels(cell.avg$Sample))
+
+# add freq to heatmap
+df <- data.frame(props$Proportions) %>% dplyr::arrange(clusters)
+vec <- df$Freq
+
+column_ha = HeatmapAnnotation(Proportion = anno_barplot(vec,
+                                                        ylim=c(0,0.7),
+                                                        height = unit(1.5, "cm"),
+                                                        gp=gpar(fill = rep(Annotation.colours, each=10))),
+                              show_legend = FALSE)
+
+legend <- Legend(col_fun = magma_scale(), title = "Scale",
+                 at = c(0, 0.2, 0.4, 0.6, 0.8, 1), direction = "horizontal")
+
+f1f <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             slot="scale.data",
+             #order.by = c("MΦ.subtype","Condition","Subject","Timepoint"),
+             order.by = c("Subtype","Condition","Subject","Timepoint"),
+             annot.by = rev(c("Subtype","Condition","Subject","Timepoint")),
+             heatmap.colors.max.scaled = inferno(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             annotation_colors = list("Subtype"= Annotation.colours,
+                                      "Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors
+                                      ),
+             gaps_col=c(14,14*2,14*3,14*4,14*5,14*6),
+             legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+             name = "Scale",
+             fontsize_row=8,
+             fontface_row = "italic",
+             # annotation_legend_param = list(labels_gp = gpar(fontface="italic",
+             #                                fontsize=8)),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical",
+                                         show_annotation_name=FALSE
+                                         ),
+             cellheight=12,
+             cellwidth=9
+             )))
+
+
+# 
+# m <- dittoHeatmap(cell.avg,
+#              genes=rownames(cell.avg@assays$RNA@scale.data),
+#              #order.by = c("MΦ.subtype","Condition","Subject","Timepoint"),
+#              order.by = c("MΦ.subtype","Condition","Sample"),
+#              annot.by = rev(c("MΦ.subtype","Condition","Subject","Timepoint")),
+#              heatmap.colors.max.scaled = inferno(256),
+#              width=unit(1/ncol(cell.avg), "npc"),
+#              complex = TRUE,
+#              scaled.to.max = TRUE,
+#              cluster_cols = FALSE, 
+#              cluster_rows = FALSE,
+#              annotation_colors = list("MΦ.subtype"= Annotation.colours,
+#                                       "Condition"= Condition.colors,
+#                                       "Subject" = Subject.colors,
+#                                       "Timepoint" = Timepoint.colors),
+#              gaps_col=c(10,20,30,40,50,60,70),
+#              legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+#              name = "Scale",
+#              fontsize=8,
+#              heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+#                                          legend_direction = "horizontal"
+#                                          ),
+#              cellheight=12,
+#              cellwidth=10
+#              )@matrix
+# 
+# breaks <- seq(min(m), 
+#               max(m), len=256)
+# 
+# Condition.colors <- setNames(c("#a4133c","#5b8e7d"),
+#                               levels(cell.avg$Condition))
+# 
+# Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+#                            kelly(22)[c(3,15)],
+#                            kelly(22)[c(19,10)]),
+#                            levels(cell.avg$Subject))
+# 
+# Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+#                              levels(cell.avg$Timepoint))
+# 
+# Sample.colors <- setNames(kelly(22)[3:12],
+#                           levels(cell.avg$Sample))
+# 
+# anno_df <- cell.avg@meta.data %>% 
+#   dplyr::select(MΦ.subtype, Condition, Subject, Timepoint) %>%
+#   dplyr::arrange(match(MΦ.subtype, levels(cell.avg$MΦ.subtype)))
+# 
+# 
+# 
+# ha <- HeatmapAnnotation(df = anno_df,
+#                         col = list("MΦ.subtype"= Annotation.colours,
+#                                    "Condition"= Condition.colors,
+#                                    "Subject" = Subject.colors,
+#                                    "Timepoint" = Timepoint.colors),
+#                         annotation_name_gp= gpar(fontsize = 10,
+#                                                  font = "bold"),
+#                         show_annotation_name = FALSE,
+#                         simple_anno_size = unit(0.4,"cm"),
+#                         show_legend = FALSE)
+# 
+# # heatmap legend
+# lgd <- Legend(col_fun = circlize::colorRamp2(breaks = breaks,
+#                                             colors = inferno(256)),
+#              at = c(0, 0.25, 0.5, 0.75, 1),
+#              title = "Scaled expression",
+#              direction = "horizontal",
+#              title_gp = gpar(fontsize=9,
+#                              fontface="bold"),
+#              labels_gp = gpar(fontsize=8),
+#              grid_height = unit(4, "mm"))
+# 
+# # annotation legend
+# lgd1 = Legend(labels=levels(anno_df$MΦ.subtype), 
+#               legend_gp = gpar(fill = Annotation.colours), 
+#               title = "MΦ.subtype")
+# lgd2 = Legend(labels=levels(anno_df$Condition), 
+#               legend_gp = gpar(fill = Condition.colors), 
+#               title = "Condition")
+# lgd3 = Legend(labels=levels(anno_df$Subject), 
+#               legend_gp = gpar(fill = Subject.colors), 
+#               title = "Subject")
+# lgd4 = Legend(labels=levels(anno_df$Timepoint), 
+#               legend_gp = gpar(fill = Timepoint.colors), 
+#               title = "Timepoint")
+# 
+# pd = packLegend(lgd1, lgd2, lgd3, lgd4)
+# 
+# f1g <- grid.grabExpr(list(
+#   draw(Heatmap(m,
+#              col=circlize::colorRamp2(breaks = breaks,
+#                                  colors = inferno(256)),
+#              heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+#                                     legend_direction = "horizontal"),
+#              name = "Scaled expression",
+#              width = unit(3.5,"mm")*ncol(m),
+#              #heatmap_width = unit(32, "cm"),
+#              #heatmap_height = unit(19, "cm"),
+#              cluster_rows = FALSE,
+#              row_names_side = "left",
+#              cluster_columns = FALSE,
+#              show_column_names = FALSE,
+#              row_names_gp = gpar(fontsize = 8),
+#              column_title = NULL,
+#              column_split = column_split,
+#              show_heatmap_legend = FALSE,
+#              top_annotation = ha),
+#        ),
+#   draw(lgd,
+#        x = unit(0.98, "npc"),
+#        y = unit(0.01, "npc"),
+#        just = c("right","bottom")),
+#   draw(pd,
+#        x = unit(0.96,"npc"),
+#        y = unit(0.5, "npc"),
+#        just = c("right"))
+#   ))
+# 
+# 
+# f1g
+# 
+# f1g <- grid.grabExpr(draw(f1f),draw(legend, x = unit(1, "cm"), y = unit(1, "cm"), just = c("right", "bottom")))
+# f1g
+```
+
+Combine panel plots
+```{r}
+layout = "AAAA\nBBBB\nCCCC\nDDDE\nFFFF\nFFFF"
+
+cairo_pdf(filename = "Fig1.230703.pdf", height=28, width=16, fallback_resolution = 600, symbolfamily = "Ariel", bg = "white")
+(ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+  f1b +
+  f1c +
+  f1d +
+  f1e +
+  f1f + 
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold"))
+dev.off()
+
+f1a <- readPNG( "f1a_AW.png" )
+g <- rasterGrob(f1a, 
+                height = unit(3,"inches"), 
+                width = unit(12,"inches"),
+                interpolate = TRUE)
+
+cairo_pdf(filename = "Fig1.230704.pdf", height=12, width=12, 
+          fallback_resolution = 600, symbolfamily = "Ariel", bg = "white")
+
+ggplot() +
+  annotation_custom(g,xmin=0, xmax=6, ymin=-Inf, ymax=Inf) +
+  f1b +
+  f1c +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold"))
+dev.off()
+
+# Fig1
+layout = "AAAA\nBBBB\nCCCC"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+(ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+  f1b +
+  f1c +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1200,
+       filename = "Fig1.231118.jpeg",
+       height=16,
+       width=16)
+
+# Fig2
+layout = "AAAAB\nCCCCC\nCCCCC"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1200)
+f1d +
+  f1e +
+  f1f + 
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1000,
+       filename = "Fig2.231118.jpeg",
+       height=14,
+       width=16)
+
+```

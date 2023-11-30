@@ -1,0 +1,3927 @@
+---
+title: "chapter4_differential_expression"
+author: "Anson Wong"
+date: '2023-05-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load packages
+```{r}
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(SeuratData))
+suppressPackageStartupMessages(library(patchwork))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(scCustomize))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(Polychrome))
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(pals))
+suppressPackageStartupMessages(library(BiocStyle))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(glue))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(ggpubr))
+suppressPackageStartupMessages(library(DESeq2))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(ggsci))
+suppressPackageStartupMessages(library(ggthemes))
+suppressPackageStartupMessages(library(topGO))
+suppressPackageStartupMessages(library(forcats))
+suppressPackageStartupMessages(library(gplots))
+suppressPackageStartupMessages(library(ReactomePA))
+suppressPackageStartupMessages(library(clusterProfiler))
+suppressPackageStartupMessages(library(speckle))
+suppressPackageStartupMessages(library(org.Hs.eg.db))
+suppressPackageStartupMessages(library(EnsDb.Hsapiens.v86))
+suppressPackageStartupMessages(library(ensembldb))
+suppressPackageStartupMessages(library(msigdbr))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(rlist))
+suppressPackageStartupMessages(library(Homo.sapiens))
+suppressPackageStartupMessages(library(msigdbr))
+suppressPackageStartupMessages(library(dittoSeq))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(tidyHeatmap))
+suppressPackageStartupMessages(library(ggplotify))
+suppressPackageStartupMessages(library(jpeg))
+suppressPackageStartupMessages(library(circlize))
+here()
+```
+
+Read and prepare object
+```{r}
+# read object
+seu <- readRDS('data_230628/SCEs/G000323.clustered.Zilionis.HLCA.mac.integrated.subclustered.annotated.scored.SEU.rds')
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+seu$Annotation <- factor(seu$Annotation)
+seu$HTO_HTODemux <- factor(seu$HTO_HTODemux,
+                           levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+# reorder Annotation
+seu$Annotation <- factor(seu$Annotation, levels=c("alvMΦ",
+                                                  "recMo/MΦ",
+                                                  "alvMΦ-proliferating",
+                                                  "alvMΦ-CCL",
+                                                  "alvMΦ-IFN",
+                                                  "alvMΦ-lipid",
+                                                  "alvMΦ-MT",
+                                                  "alvMΦ-T"))
+
+# add updated annotation
+Annotation2 <- setNames(c("AM",
+                         "RM",
+                         "AM-proliferating",
+                         "AM-CCL",
+                         "AM-IFN",
+                         "AM-lipid",
+                         "AM-MT",
+                         "AM-T"), levels(seu$Annotation))
+Annotation2 <- Annotation2[seu$Annotation]
+names(Annotation2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation2, col.name = "Annotation2")
+seu$Annotation2 <- factor(seu$Annotation2, 
+                          levels=c("AM",
+                                   "RM",
+                                   "AM-proliferating",
+                                   "AM-CCL",
+                                   "AM-IFN",
+                                   "AM-lipid",
+                                   "AM-MT",
+                                   "AM-T"))
+
+# add RM vs AM annotation
+Annotation3 <- setNames(c("AM",
+                          "RM",
+                          rep("AM",6)), levels(seu$Annotation))
+Annotation3 <- Annotation3[seu$Annotation]
+names(Annotation3) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Annotation3, col.name = "Annotation3")
+seu$Annotation3 <- factor(seu$Annotation3, 
+                          levels=c("AM",
+                                   "RM"))
+
+# add Condition to metadata
+Condition <- setNames(c(rep("ETI-treated",4),
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)),
+                       levels(seu$HTO_HTODemux))
+Condition <- Condition[seu$HTO_HTODemux]
+names(Condition) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Condition, col.name = "Condition")
+seu$Condition <- factor(seu$Condition,
+                        levels=c("ETI-treated", "CF-untreated","Healthy"))
+
+# add Subject to metadata
+seu$HTO_HTODemux <- factor(seu$HTO_HTODemux,
+                           levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(seu$HTO_HTODemux))
+
+Subject <- Subject[seu$HTO_HTODemux]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# add Sample to metadata
+Sample <- setNames(c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"),levels(seu$HTO_HTODemux))
+
+Sample <- Sample[seu$HTO_HTODemux]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                          levels=c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"))
+
+# add Timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(seu$HTO_HTODemux))
+Timepoint <- Timepoint[seu$HTO_HTODemux]
+names(Timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+```
+
+Plot number of macrophage
+```{r}
+d <- data.frame(HTO_HTODemux=factor(levels(seu$HTO_HTODemux),
+                                    levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16))),
+                cell.counts=c(6909,9056,1922,2984,8696,14243,2845,3767,9326,7704),
+                monocyte.macrophage.counts=summary(seu$HTO_HTODemux),
+                RM.counts = tapply(seu$HTO_HTODemux,seu$Annotation, summary)[[1]],
+                AM.counts = tapply(s2$HTO_HTODemux,s2$predicted.ann_level_2, summary)[[1]],
+                Sample=factor(c("M1C188","M1C188B","M1C160 (1)", "M1C160F","M1C170C","M1C170D","M1C176","M1C176C","M1N092","M1N075"),
+                              levels=c("M1C188","M1C188B","M1C160 (1)","M1C160F","M1C170C","M1C170D","M1C176","M1C176C","M1N092","M1N075")))
+
+
+ggplot(d, aes(x=Sample,y=monocyte.macrophage.counts)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  geom_text(aes(label = monocyte.macrophage.counts, vjust=-1)) +
+  theme(axis.text.x = element_text(angle = 45,vjust=0.5,hjust=0.5, size=12))
+
+ggplot(d, aes(x=Sample,y=cell.counts)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  geom_text(aes(label = cell.counts, vjust=-1)) +
+  theme(axis.text.x = element_text(angle = 45,vjust=0.5,hjust=0.5, size=12))
+
+
+s2 <- subset(seu, Annotation != "recMo/MΦ")
+
+```
+# Q1. What genes are differentially expressed between healthy and CF samples (at t1)?
+
+Visualize UMAP
+```{r}
+p1 <- DimPlot(seu, cols = colours, group.by = "integrated_snn_res.0.3", split.by = "condition1")
+p2 <- DimPlot(seu, cols = colours, group.by = "integrated_snn_res.0.4", split.by = "condition1")
+p3 <- DimPlot(seu, cols = colours, group.by = "integrated_snn_res.0.5", split.by = "condition1")
+p1/p2/p3
+# ggsave(plot = last_plot(), filename = "macrophage_UMAP.230611.jpeg",
+#        height=10, width=10)
+colours <- c(brewer.paired(12), rev(brewer.accent(8)), rev(brewer.dark2(8)), brewer.set2(8))
+
+seu@meta.data %>% 
+  ggplot(aes(x = integrated_snn_res.0.5, fill = condition1)) +
+  geom_bar() +
+  geom_text(aes(label = ..count..), stat = "count",
+            position=position_stack(vjust = 0.5), colour = "black", size = 2) +
+  ggtitle("Number of cells in each condition\n") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        plot.title=element_text(hjust=0.5, face="bold", size=14)) +
+  scale_fill_manual(values = colours)
+
+# ggsave(plot = last_plot(), filename = "num_cell_per_condition.230611.jpeg",
+#        height=6, width=6)
+```
+
+Subset macrophage
+```{r}
+celltype <- "RM"
+cell <- subset(seu, Annotation3 == "RM")
+
+# most updated run: 230906
+dirName <- here("data_230906", "DE", celltype)
+if(!dir.exists(dirName)) {
+  dir.create(dirName, recursive = TRUE)
+}
+Idents(cell) <- "condition3"
+
+```
+
+Normalize data (necessary before DE!)
+```{r}
+DefaultAssay(cell) <- "RNA"
+cell <- NormalizeData(cell)
+```
+
+Change comparison here
+```{r}
+# *** change here ***
+test <- "CF_treated_t2"
+control <- "CF_treated_t1"
+compare <- glue(test,"_vs_",control)
+outDIR <- here("data_230716", "DE", celltype, compare)
+if(!dir.exists(outDIR)) {
+  dir.create(glue(outDIR, "/DEG"), recursive = TRUE)
+  dir.create(glue(outDIR, "/Reactome"), recursive = TRUE)
+  dir.create(glue(outDIR, "/WikiPathway"), recursive = TRUE)
+  dir.create(glue(outDIR, "/GO_CC"), recursive = TRUE)
+  dir.create(glue(outDIR, "/GO_BP"), recursive = TRUE)
+  dir.create(glue(outDIR, "/GO_MF"), recursive = TRUE)
+}
+```
+
+DE
+```{r}
+# condition vs healthy
+deg <- FindMarkers(cell,
+                   ident.1=test, # condition
+                   ident.2=control, # healthy
+                   test.use="wilcox",
+                   logfc.threshold = 0,
+                   only.pos = FALSE)
+
+deg$gene <- rownames(deg)
+
+# get sig up- and down-regulated genes
+deg <- deg %>% dplyr::filter(p_val_adj < 0.05)
+# deg$ENTREZID <- genes[deg$gene,]$ENTREZID
+# deg <- deg %>% filter(!is.na(ENTREZID),)
+# 
+# geneList <- setNames(deg$avg_log2FC, deg$ENTREZID)
+# geneList <- sort(geneList, decreasing = TRUE)
+
+up <- deg %>% dplyr::filter(p_val_adj < 0.05 & avg_log2FC>0) %>% dplyr::arrange(desc(avg_log2FC))
+down <- deg %>% dplyr::filter(p_val_adj < 0.05 & avg_log2FC<0) %>% dplyr::arrange(desc(avg_log2FC))
+
+# get ensemblDB
+#ensembl DB
+getCols <- setNames(c("SYMBOL","ENTREZID"),c("SYMBOL","ENTREZID"))
+
+genes <- data.frame(
+  lapply(getCols, function(column) {
+    mapIds(
+      x = org.Hs.eg.db,
+      keys = unique(deg$gene),
+      keytype = "SYMBOL",
+      column = column)
+  }),
+  row.names = unique(deg$gene))
+
+# perform pathway over-representation analysis
+# Reactome
+reactome.up <- enrichPathway(genes[up$gene,]$ENTREZID,
+                             pAdjustMethod = "fdr", readable=TRUE)
+reactome.up <- reactome.up@result
+
+reactome.down <- enrichPathway(genes[down$gene,]$ENTREZID,
+                               pAdjustMethod="fdr", readable=TRUE)
+reactome.down <- reactome.down@result
+
+reactome.all <- enrichPathway(genes[deg$gene,]$ENTREZID,
+                               pAdjustMethod="fdr", readable=TRUE)
+reactome.all <- reactome.all@result #%>% dplyr::mutate(Direction=rep("Down",nrow(reactome.all@result)))
+
+# WikiPathway
+wiki.up <- enrichWP(genes[up$gene,]$ENTREZID, organism = "Homo sapiens", pAdjustMethod="fdr")
+wiki.up <- setReadable(wiki.up, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+wiki.up <- wiki.up@result
+
+wiki.down <- enrichWP(genes[down$gene,]$ENTREZID, organism = "Homo sapiens", pAdjustMethod="fdr")
+wiki.down <- setReadable(wiki.down, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+wiki.down <- wiki.down@result
+
+wiki.all <- enrichWP(genes[deg$gene,]$ENTREZID, organism = "Homo sapiens", pAdjustMethod="fdr")
+wiki.all <- setReadable(wiki.all, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+wiki.all <- wiki.all@result
+
+# GO 
+go.up <- enrichGO(genes[up$gene,]$ENTREZID, OrgDb=org.Hs.eg.db, ont="ALL",
+                  pAdjustMethod = "BH", readable=TRUE)
+?
+barplot(wiki.up, showCategory=20) + scale_fill_viridis()
+
+go.up.cc <- go.up@result %>% dplyr::filter(ONTOLOGY == "CC")
+go.up.bp <- go.up@result %>% dplyr::filter(ONTOLOGY == "BP")
+go.up.mf <- go.up@result %>% dplyr::filter(ONTOLOGY == "MF")
+
+go.down <- enrichGO(genes[down$gene,]$ENTREZID, OrgDb=org.Hs.eg.db, ont="ALL",
+                    pAdjustMethod = "BH", readable=TRUE)
+go.down.cc <- go.down@result %>% dplyr::filter(ONTOLOGY == "CC")
+go.down.bp <- go.down@result %>% dplyr::filter(ONTOLOGY == "BP")
+go.down.mf <- go.down@result %>% dplyr::filter(ONTOLOGY == "MF")
+
+go.all <- enrichGO(genes[deg$gene,]$ENTREZID, OrgDb=org.Hs.eg.db, ont="ALL",
+                   pAdjustMethod = "BH", readable=TRUE)
+go.all.cc <- go.all@result %>% dplyr::filter(ONTOLOGY == "CC")
+go.all.bp <- go.all@result %>% dplyr::filter(ONTOLOGY == "BP")
+go.all.mf <- go.all@result %>% dplyr::filter(ONTOLOGY == "MF")
+
+```
+
+Write results
+```{r}
+# DEGs
+out <- glue(outDIR, "/DEG/")
+
+write.csv(up %>%
+            dplyr::relocate(gene),
+            file = glue(out, "{celltype}.{compare}.DEG-up.csv"),
+            row.names = FALSE)
+write.csv(down %>%
+            dplyr::relocate(gene),
+            file = glue(out, "{celltype}.{compare}.DEG-down.csv"),
+            row.names = FALSE)
+write.csv(deg %>%
+            dplyr::relocate(gene),
+            file = glue(out, "{celltype}.{compare}.DEG-all.csv"),
+            row.names = FALSE)
+  
+# Reactome
+out <- glue(outDIR, "/Reactome/")
+reactome.up %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::arrange(p.adjust) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.REACTOME-up.csv")))
+
+reactome.down %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::arrange(p.adjust) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.REACTOME-down.csv")))
+
+reactome.all %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::arrange(p.adjust) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.REACTOME-all.csv")))
+
+# WikiPathway
+out <- glue(outDIR, "/WikiPathway/")
+wiki.up %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.WikiPathway-up.csv")))
+
+wiki.down %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.WikiPathway-down.csv")))
+
+wiki.all %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.WikiPathway-all.csv")))
+
+# GO
+# CC
+out <- glue(outDIR, "/GO_CC/")
+go.up.cc %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_CC-up.csv")))
+
+go.down.cc %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_CC-down.csv")))
+
+go.all.cc %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_CC-all.csv")))
+
+# BP
+out <- glue(outDIR, "/GO_BP/")
+go.up.bp %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_BP-up.csv")))
+
+go.down.bp %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_BP-down.csv")))
+
+go.all.bp %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_BP-all.csv")))
+
+# MF
+out <- glue(outDIR, "/GO_MF/")
+go.up.mf %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_MF-up.csv")))
+
+go.down.mf %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_MF-down.csv")))
+
+go.all.mf %>%
+  dplyr::rename(Pathway=Description) %>%
+  dplyr::select(Pathway, ID, Count, geneID, pvalue, p.adjust, qvalue) %>%
+  # slice_head(n = 50) %>%
+  write_csv(file = here(glue(out, "{celltype}.{compare}.GO_MF-all.csv")))
+
+```
+
+GO barplot for selected pathways
+```{r}
+celltype <- "RM"
+test <- "ETI-treated_t2"
+control <- "ETI-treated_t1"
+compare <- glue(test,"_vs_",control)
+
+suppressPackageStartupMessages(library(enrichplot))
+data.wp <- read.csv(here("data_230906","DE",celltype,compare,"WikiPathway",glue(celltype,".",compare,".WikiPathway-up.csv")))
+dat.reactome <- read.csv(here("data_230906","DE",celltype,compare,"Reactome",glue(celltype,".",compare,".REACTOME-up.csv")))
+
+data <- rbind(data.wp, dat.reactome) %>%
+  dplyr::filter(ID %in% c("WP4754","WP2018","R-HSA-449147","R-HSA-6783783","R-HSA-6785807",
+                          "WP2036","WP2374","WP231","WP382","WP75"))
+  #%>% head(50)#%>% dplyr::filter(ID %in% c("WP3624", "R-HSA-6785807", "R-HSA-6783783"))
+
+#barplot(data, showCategory=3) + scale_fill_viridis()
+
+data$log.p.adjust <- -log(data$p.adjust)
+
+
+f3b <- ggplot(data, aes(x=reorder(Pathway,log.p.adjust),y=-log(p.adjust))) +
+  theme_classic() +
+  geom_bar(stat="identity", fill=rep("#b7e4c7",10)) + 
+  coord_flip() +
+  theme(axis.text=element_text(family="Arial",
+                               size=10)) +
+  ggtitle("ETI-treated T2 Vs ETI-treated T1") +
+  xlab("Pathway") +
+  ylab("-log(p.adjust)") +
+  theme(plot.title=element_text(hjust=0.5, size=14, face="bold"),
+        axis.text=element_text(size=12))
+f3b
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(f3b)
+
+f3b
+ggsave(f3b, device="jpeg", dpi=1600, filename = "go.barplot.230920.jpeg", height=4, width=8)
+```
+
+Prepare GO pathway list
+```{r}
+# c5_sets <- data.table(msigdbr(species = "Homo sapiens", category = "C5"))
+# c5_sets <- mapIds(org.Hs.eg.db, keys(org.Hs.eg.db,"GO"), "SYMBOL", "GO", multiVals="list")
+c5_sets <- read.gmt('/group/canc2/anson/reference/annotation/gsea-msigdb/msigdb_v2023.1.Hs_GMTs/c5.all.v2023.1.Hs.symbols.gmt')
+
+# function to append vectors
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+# set 1: PRR
+go <- read.csv(here("pathway/GO_BP.PRR.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set1 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOBP_",i)))$gene))
+  set1 <- lappend(set1, genes)
+}
+names(set1) <- go.vector
+set1
+
+# set 2: phagocytosis
+go <- read.csv(here("pathway/GO_BP.phagocytosis.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set2 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOBP_",i)))$gene))
+  set2 <- lappend(set2, genes)
+}
+names(set2) <- go.vector
+set2$RAB_PROTEIN_SIGNAL_TRANSDUCTION <- c(unlist(c((c5_sets %>% dplyr::filter(term==glue("GOBP_","RAB_PROTEIN_SIGNAL_TRANSDUCTION")))$gene)))
+
+# set 3: inflammation
+go <- read.csv(here("pathway/GO_BP.inflammation.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set3 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOBP_",i)))$gene))
+  set3 <- lappend(set3, genes)
+}
+names(set3) <- go.vector
+set3
+
+# set 4: ROs
+go <- read.csv(here("pathway/GO_BP.ROS.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set4 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOBP_",i)))$gene))
+  set4 <- lappend(set4, genes)
+}
+names(set4) <- go.vector
+set4
+
+# set 5: MF
+go <- read.csv(here("pathway/GO_MF.macrophage.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set5 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOMF_",i)))$gene))
+  set5 <- lappend(set5, genes)
+}
+names(set5) <- go.vector
+set5
+
+# Lipid ========================================================================
+# set 6: lipid
+go <- read.csv(here("pathway/GO_BP.lipid.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set6 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c5_sets %>% dplyr::filter(term == glue("GOBP_",i)))$gene))
+  set6 <- lappend(set6, genes)
+}
+names(set6) <- go.vector
+set6 <- list_drop_empty(set6)
+
+#Prepare WikiPathways pathway list
+c2_sets <- read.gmt('/group/canc2/anson/reference/annotation/gsea-msigdb/msigdb_v2023.1.Hs_GMTs/c2.cp.wikipathways.v2023.1.Hs.symbols.gmt')
+
+# WikiPathways lipid
+go <- read.csv(here("pathway/WP.lipid.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set7 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c2_sets %>% dplyr::filter(term == glue("WP_",i)))$gene))
+  set7 <- lappend(set7, genes)
+}
+names(set7) <- go.vector
+set7
+
+#Prepare REACTOME pathway list
+reactome_sets <- read.gmt('/group/canc2/anson/reference/annotation/gsea-msigdb/msigdb_v2023.1.Hs_GMTs/c2.cp.reactome.v2023.1.Hs.symbols.gmt')
+
+# WikiPathways lipid
+go <- read.csv(here("pathway/Reactome.lipid.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set8 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((reactome_sets %>% dplyr::filter(term == glue("REACTOME_",i)))$gene))
+  set8 <- lappend(set8, genes)
+}
+names(set8) <- go.vector
+set8
+set6 <- lappend(set6, set7, set8)
+
+# append pathway list ==========================================================
+pathway.sets <- c(set1,set2,set3,set4,set5,set6)
+pathway.sets <- c(set6,set7,set8)
+# housekeeping genes
+core.genes <- read.csv("OFlanagan.2019.coreGenes.csv")
+core.genes <- core.genes$gene_symbol
+
+```
+
+Add module score (230805 macrophage)
+```{r}
+DefaultAssay(seu) <- "RNA"
+
+seu <- AddModuleScore(seu, features=pathway.sets, name="Lipid.pathway")
+
+```
+
+Add module score (230628 macrophage)
+```{r}
+DefaultAssay(seu) <- "RNA"
+seu <- NormalizeData(seu)
+
+seu <- AddModuleScore(seu, features=set1, name="PRR.pathway")
+seu <- AddModuleScore(seu, features=set2, name="Phago.pathway")
+seu <- AddModuleScore(seu, features=set3, name="Inflam.pathway")
+seu <- AddModuleScore(seu, features=set4, name="ROS.pathway")
+seu <- AddModuleScore(seu, features=set5, name="MF.pathway")
+seu <- AddModuleScore(seu, features=core.genes, name="Housekeeping")
+
+# rename columns for phagocytosis pathways
+seu$FC_GAMMA_RECEPTOR_SIGNALING_PATHWAY <- seu$PRR.pathway1
+seu$CELL_SURFACE_TOLL_LIKE_RECEPTOR_SIGNALING_PATHWAY <- seu$PRR.pathway2
+seu$REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY <- seu$PRR.pathway3
+seu$CELL_SURFACE_PATTERN_RECOGNITION_RECEPTOR_SIGNALING_PATHWAY <- seu$PRR.pathway4
+seu$ANTIGEN_PROCESSING_AND_PRESENTATION <- seu$PRR.pathway5
+seu$TOLL_LIKE_RECEPTOR_SIGNALING_PATHWAY <- seu$PRR.pathway6
+
+seu$ACTIN_POLYMERIZATION_OR_DEPOLYMERIZATION <- seu$Phago.pathway1
+seu$MACROAUTOPHAGY <- seu$Phago.pathway2
+seu$REGULATION_OF_AUTOPHAGY <- seu$Phago.pathway3
+seu$PHAGOCYTOSIS <- seu$Phago.pathway4
+seu$PHAGOCYTOSIS_ENGULFMENT <- seu$Phago.pathway5
+seu$PHAGOCYTOSIS_RECOGNITION <- seu$Phago.pathway6
+seu$PHAGOSOME_LYSOSOME_FUSION <- seu$Phago.pathway7
+seu$PHAGOLYSOSOME_ASSEMBLY <- seu$Phago.pathway8
+seu$AUTOPHAGOSOME_ORGANIZATION <- seu$Phago.pathway9
+seu$PHAGOSOME_ACIDIFICATION <- seu$Phago.pathway10
+seu$PHAGOSOME_MATURATION <- seu$Phago.pathway11
+seu$LYSOSOMAL_LUMEN_ACIDIFICATION <- seu$Phago.pathway12
+seu$VACUOLAR_ACIDIFICATION <- seu$Phago.pathway13
+seu$OPSONIZATION <- seu$Phago.pathway14
+seu$COMPLEMENT_ACTIVATION <- seu$Phago.pathway15
+seu$APOPTOTIC_CELL_CLEARANCE <- seu$Phago.pathway16
+seu$APOPTOTIC_SIGNALING_PATHWAY <- seu$Phago.pathway17
+seu$RAB_PROTEIN_SIGNAL_TRANSDUCTION <- seu$Phago.pathway18
+
+seu$INNATE_IMMUNE_RESPONSE <- seu$Inflam.pathway1
+seu$REGULATION_OF_INNATE_IMMUNE_RESPONSE <- seu$Inflam.pathway2
+seu$TYPE_II_INTERFERON_PRODUCTION <- seu$Inflam.pathway3
+seu$TYPE_II_INTERFERON_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway4
+seu$CELLULAR_RESPONSE_TO_TYPE_II_INTERFERON <- seu$Inflam.pathway5
+seu$RESPONSE_TO_TYPE_II_INTERFERON <- seu$Inflam.pathway6
+seu$INTERLEUKIN_1_PRODUCTION <- seu$Inflam.pathway7
+seu$INTERLEUKIN_1_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway8
+seu$RESPONSE_TO_INTERLEUKIN_1 <- seu$Inflam.pathway9
+seu$INTERLEUKIN_4_PRODUCTION <- seu$Inflam.pathway10
+seu$INTERLEUKIN_4_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway11
+seu$RESPONSE_TO_INTERLEUKIN_4 <- seu$Inflam.pathway12
+seu$INTERLEUKIN_6_PRODUCTION <- seu$Inflam.pathway13
+seu$INTERLEUKIN_6_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway14
+seu$RESPONSE_TO_INTERLEUKIN_6 <- seu$Inflam.pathway15
+seu$INTERLEUKIN_8_PRODUCTION <- seu$Inflam.pathway16
+seu$INTERLEUKIN_10_PRODUCTION <- seu$Inflam.pathway17
+seu$INTERLEUKIN_12_PRODUCTION <- seu$Inflam.pathway18
+seu$RESPONSE_TO_INTERLEUKIN_12 <- seu$Inflam.pathway19
+seu$INTERLEUKIN_13_PRODUCTION <- seu$Inflam.pathway20
+seu$TUMOR_NECROSIS_FACTOR_SUPERFAMILY_CYTOKINE_PRODUCTION <- seu$Inflam.pathway21
+seu$TUMOR_NECROSIS_FACTOR_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway22
+seu$RESPONSE_TO_TUMOR_NECROSIS_FACTOR <- seu$Inflam.pathway23
+seu$INTERLEUKIN_18_PRODUCTION <- seu$Inflam.pathway24
+seu$INTERLEUKIN_18_MEDIATED_SIGNALING_PATHWAY <- seu$Inflam.pathway25
+seu$RESPONSE_TO_INTERLEUKIN_18 <- seu$Inflam.pathway26
+seu$LEUKOCYTE_CELL_CELL_ADHESION <- seu$Inflam.pathway27
+seu$LEUKOCYTE_MIGRATION <- seu$Inflam.pathway28
+seu$MONONUCLEAR_CELL_MIGRATION <- seu$Inflam.pathway29
+seu$POSITIVE_REGULATION_OF_MAPK_CASCADE <- seu$Inflam.pathway30
+
+seu$SUPEROXIDE_ANION_GENERATION <- seu$ROS.pathway1
+seu$SUPEROXIDE_METABOLIC_PROCESS <- seu$ROS.pathway2
+seu$REACTIVE_OXYGEN_SPECIES_METABOLIC_PROCESS <- seu$ROS.pathway3
+seu$REACTIVE_NITROGEN_SPECIES_METABOLIC_PROCESS <- seu$ROS.pathway4
+
+seu$SCAVENGER_RECEPTOR_ACTIVITY <- seu$MF.pathway1
+seu$COMPLEMENT_RECEPTOR_ACTIVITY <- seu$MF.pathway2
+seu$COMPLEMENT_BINDING <- seu$MF.pathway3
+
+seu$housekeeping <- seu$Housekeeping1
+
+```
+
+Add module score (WikiPathway)
+```{r}
+#Prepare WikiPathways pathway list
+c2_sets <- read.gmt('/group/canc2/anson/reference/annotation/gsea-msigdb/msigdb_v2023.1.Hs_GMTs/c2.cp.wikipathways.v2023.1.Hs.symbols.gmt')
+
+# function to append vectors
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+# set 1: PRR
+go <- read.csv(here("pathway/WP.recMac.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set1 <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((c2_sets %>% dplyr::filter(term == glue("WP_",i)))$gene))
+  set1 <- lappend(set1, genes)
+}
+names(set1) <- go.vector
+
+# score
+seu <- AddModuleScore(seu, assay = "RNA", features=set1, name="RM.WikiPathway")
+
+# rename columns for phagocytosis pathways
+seu$LUNG_FIBROSIS <- seu$RM.WikiPathway1
+#seu$IL18_SIGNALING_PATHWAY <- seu$RM.WikiPathway2
+#seu$IL1_SIGNALING_PATHWAY <- seu$RM.WikiPathway3
+
+seu$RM.WikiPathway1 <- NULL
+#seu$RM.WikiPathway2 <- NULL
+#seu$RM.WikiPathway3 <- NULL
+
+```
+
+Add module score (REACTOME)
+```{r}
+#Prepare WikiPathways pathway list
+reactome_sets <- read.gmt('/group/canc2/anson/reference/annotation/gsea-msigdb/msigdb_v2023.1.Hs_GMTs/c2.cp.reactome.v2023.1.Hs.symbols.gmt')
+
+# function to append vectors
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+# set 1: PRR
+go <- read.csv(here("pathway/Reactome.recMac.csv"))
+go.vector <- setNames(go$Pathway, go$ID)
+
+set <- list()
+
+for (i in go.vector) {
+  #message(i)
+  genes <- unlist(c((reactome_sets %>% dplyr::filter(term == glue("REACTOME_",i)))$gene))
+  set <- lappend(set, genes)
+}
+names(set) <- go.vector
+
+pathway.sets <- c(pathway.sets, set)
+
+# score
+seu <- AddModuleScore(seu, assay = "RNA", features=set, name="RM.ReactomePathway")
+
+# rename columns
+seu$INTERLEUKIN_10_SIGNALING <- seu$RM.ReactomePathway1
+seu$INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING <- seu$RM.ReactomePathway2
+#seu$TOLL_LIKE_RECEPTOR_CASCADES <- seu$RM.ReactomePathway3
+
+seu$RM.ReactomePathway1 <- NULL
+seu$RM.ReactomePathway2 <- NULL
+#seu$RM.ReactomePathway3 <- NULL
+```
+
+Save object
+```{r}
+seu@meta.data[,92:152] <- NULL
+
+saveRDS(seu, here("data_230628/SCEs/G000323.clustered.Zilionis.HLCA.mac.integrated.subclustered.annotated.scored.SEU.rds"))
+```
+
+Violin plot
+```{r}
+# compare <- c("CF_treated_t1", "CF_untreated_t1","Healthy")
+# 
+# cell <- subset(seu, condition1 %in% compare)
+# cell$condition1 <- fct_drop(cell$condition1)
+# cell$timepoint <- fct_drop(cell$timepoint)
+
+# # celltype.1 for TRM
+# celltype <- c("RM","TRM")
+# cell.s <- subset(cell, celltype.1 %in% celltype)
+# cell.s$celltype.1 <- fct_drop(cell.s$celltype.1)
+
+# features <- colnames(cell.s@meta.data[111:124])
+
+# # celltype.2 for TRM_all
+# celltype <- "TRM_all"
+# cell.s <- subset(cell, celltype.2 == celltype)
+# cell.s$celltype.2 <- fct_drop(cell.s$celltype.2)
+
+# celltype <- c("RM","TRM")
+# cell.s <- subset(cell, celltype.3 %in% celltype)
+# cell.s$celltype.3 <- fct_drop(cell.s$celltype.3)
+
+# # plot a list for each set
+# # plot split by celltype.3 =====================================================
+# set.name <- "ROS"
+# features <- set4 # change set here
+# 
+# pts <- VlnPlot(cell.s,
+#         features = names(features), 
+#         pt.size = 0,
+#         ncol = 1,
+#         group.by = "condition1",
+#         split.by = "celltype.3",
+#         split.plot = TRUE,
+#         combine = FALSE,
+#         log=FALSE,
+#         same.y.lims = FALSE)
+# 
+# lappend <- function (lst, ...){
+# lst <- c(lst, list(...))
+#   return(lst)
+# }
+# 
+# # plots <- list()
+# df <- cell.s@meta.data
+# 
+# # split by cell type
+# for (i in seq(length(pts))) {
+#   message(names(features[i]))              # change set here
+#   values <- unlist(df[,grep(names(features[i]), colnames(df))])
+#   p <- pts[[i]] + ggtitle(names(features[i])) +
+#     theme(plot.title=element_text(size=10.5),
+#           axis.text.y = element_text(size=10),
+#           axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+#           axis.title=element_text(colour = "white"),
+#           legend.text=element_text(size=8)) +
+#     scale_y_continuous(limits = quantile(values, c(0.001,0.999))) +
+#     scale_fill_manual(values = c("#fca311","#457b9d"))
+#   # plots <- lappend(plots, p)
+#   ggsave(p, device="jpeg",height=4,width=6,
+#          filename = here("AddModuleScore",glue(set.name,".",names(features[i]),".score.jpeg")))
+# }
+
+# ==============================================================================
+# plot split by condition
+# notes***
+# first, change compare
+# for each copmare, loop through RM and TRM
+# for every celltype, loop through set 1 to set 4
+
+# 230724 =======================================================================
+celltype <- "RM" # do separately for RM and TRM
+cell <- subset(seu, Annotation != "recMo/MΦ")
+cell$Annotation <- fct_drop(cell$Annotation)
+
+# plot all in a loop
+pathways <- read.csv("pathway/pathway.230724.csv")
+set2 <- setNames((pathways %>% dplyr::filter(category=="Phago"))$pathway,
+                 (pathways %>% dplyr::filter(category=="Phago"))$ID)
+set3 <- setNames((pathways %>% dplyr::filter(category=="Inflam"))$pathway,
+                 (pathways %>% dplyr::filter(category=="Inflam"))$ID)
+set4 <- setNames((pathways %>% dplyr::filter(category=="ROS"))$pathway,
+                 (pathways %>% dplyr::filter(category=="ROS"))$ID)
+set6 <- setNames((pathways %>% dplyr::filter(category=="lipid"))$pathway,
+                 (pathways %>% dplyr::filter(category=="lipid"))$ID)
+
+plot.sets <- setNames(list(set1, set2, set3, set4),
+                      c("PRR", "Phago", "Inflam", "ROS"))
+
+# 230816 Fig 4 =================================================================
+celltype <- "AM" # do separately for RM and AM
+cell <- subset(seu, Condition == "ETI-treated")
+cell$Timepoint <- fct_drop(cell$Timepoint)
+
+pathways <- read.csv("pathway/pathway.230816.csv")
+set1 <- setNames((pathways %>% dplyr::filter(category=="PRR"))$pathway,
+                 (pathways %>% dplyr::filter(category=="PRR"))$ID)
+set2 <- setNames((pathways %>% dplyr::filter(category=="Phago"))$pathway,
+                 (pathways %>% dplyr::filter(category=="Phago"))$ID)
+plot.sets <- setNames(list(set1, set2),
+                      c("PRR", "Phago"))
+plot.sets
+
+# heatmap using dittoSeq
+Condition.colors <- setNames(c("#a4133c","#fff3b0","#5b8e7d"),
+                              levels(cell$Condition))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(cell$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(cell$Timepoint))
+
+df <- cell@meta.data
+values <- unlist(df[,grep(features[j], colnames(df))])
+
+features <- unlist(plot.sets)
+pts <- VlnPlot(cell,
+        features=features,
+        pt.size=0,
+        ncol=4,
+        group.by="Annotation3",
+        split.by="Timepoint",
+        split.plot=TRUE,
+        combine=FALSE,
+        log=FALSE,
+        same.y.lims=FALSE)
+
+title.list <- setNames(unlist(plot.sets),
+                      c("Cell surface TLR signaling pathway",
+                        "Cell surface PRR signaling pathway",
+                        "Phagosome-lysosome fusion",
+                        "Phagolysosome assembly",
+                        "Phagosome acidification",
+                        "Phagosome maturation",
+                        "Lysosomal lumen acidification",
+                        "Vacuolar acidification"))
+plots <- list()
+
+for (j in seq(length(pts))) {
+  message(features[j])
+  values <- unlist(df[,grep(features[j], colnames(df))])
+  head(values)
+  p <- pts[[j]] + NoLegend() + ggtitle(names(title.list[j])) +
+    theme(plot.title=element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=6)) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+    #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+    scale_fill_manual(values = c(Timepoint.colors[which(names(Timepoint.colors) == levels(cell$Timepoint)[1])],
+                                 Timepoint.colors[which(names(Timepoint.colors) == levels(cell$Timepoint)[2])]))
+  plots <- lappend(plots, p)
+}
+
+outp <- plot_grid(plotlist=plots, ncol=4)
+outp
+ggsave("230821.jpeg", device="jpeg",dpi=600, width=8, height=4)
+
+
+#ggtitle(glue(features[j],'\n',names(features[j]))) +
+      theme(plot.title=element_text(size=6),
+            axis.text.y = element_text(size=6),
+            axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+            axis.title=element_text(colour = "white"),
+            legend.text=element_text(size=6)) +
+      scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+      #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+      #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+      scale_fill_manual(values = c("#A1CAF1", "#0067A5"))
+
+
+for (i in seq(length(plot.sets))) {
+  set.name <- names(plot.sets[i])
+  features <- plot.sets[[i]] # change set here
+  
+  message(set.name)
+  
+  dirName <- glue(here("data_230718/AddModuleScore/"),celltype)
+  if(!dir.exists(dirName)) {
+    dir.create(dirName, recursive = TRUE)
+    }
+  
+  pts <- VlnPlot(cell,
+                 features = features,
+                 pt.size = 0,
+                 ncol = 1,
+                 group.by = "condition2",
+                 split.by = "f.Timepoint",
+                 split.plot = TRUE,
+                 combine = FALSE,
+                 log=FALSE,
+                 same.y.lims = FALSE)
+
+  plots <- list()
+  
+  for (j in seq(length(pts))) {
+    message(features[j])
+    values <- unlist(df[,grep(features[j], colnames(df))])  
+    p <- pts[[j]] + ggtitle(glue(features[j],'\n',names(features[j]))) +
+      theme(plot.title=element_text(size=6),
+            axis.text.y = element_text(size=6),
+            axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+            axis.title=element_text(colour = "white"),
+            legend.text=element_text(size=6)) +
+      scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+      #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+      #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+      scale_fill_manual(values = c(Timepoint.colors[which(names(Timepoint.colors) == levels(cell$f.Timepoint)[1])],
+                                   Timepoint.colors[which(names(Timepoint.colors) == levels(cell$f.Timepoint)[2])]))
+    plots <- lappend(plots, p)
+  
+  outp <- plot_grid(plotlist=plots, ncol=5)
+  
+  ggsave(outp, device="jpeg",height=ceiling(length(plots)/5)*2,width=15,
+         filename = glue(dirName, '/', celltype,".",
+                         glue(set.name,".score.jpeg")))
+  }
+}
+
+# 230805 =======================================================================
+celltype <- "AM" # do separately for RM and AM
+cell <- subset(seu, Annotation != "recMo/MΦ")
+cell$Annotation <- fct_drop(cell$Annotation)
+
+# plot all in a loop
+pathways <- read.csv("pathway/pathway.230805.csv")
+set1 <- setNames((pathways %>% dplyr::filter(category=="GO_BP"))$pathway,
+                 (pathways %>% dplyr::filter(category=="GO_BP"))$ID)
+set2 <- setNames((pathways %>% dplyr::filter(category=="WikiPathways"))$pathway,
+                 (pathways %>% dplyr::filter(category=="WikiPathways"))$ID)
+set3 <- setNames((pathways %>% dplyr::filter(category=="REACTOME"))$pathway,
+                 (pathways %>% dplyr::filter(category=="REACTOME"))$ID)
+
+plot.sets <- setNames(list(set1, set2, set3),
+                      c("GO_BP", "WikiPathways", "REACTOME"))
+# plot.sets <- setNames(list(set1, set2),
+#                       c("PRR", "Phago"))
+
+#compare <- c("CF_treated_t1","CF_untreated_t1") # do separately for CF_treated_t1 and CF_untreated_t1
+df <- cell@meta.data
+# create a fake timepoint for healthy samples
+f.Timepoint <- setNames(c(rep(c("T1","T2"),5)), levels(cell$HTO_HTODemux))
+f.Timepoint <- f.Timepoint[cell$HTO_HTODemux]
+names(f.Timepoint) <- colnames(cell)
+cell <- AddMetaData(cell, metadata = f.Timepoint, col.name = "f.Timepoint")
+cell$f.Timepoint <- factor(cell$f.Timepoint,
+                             levels=c("T1","T2"))
+
+cor.features <- setNames(names(pathway.sets),colnames(seu@meta.data)[157:377])
+
+for (i in seq(length(cor.features))) {
+  message(cor.features[i])
+  message(names(cor.features[i]))
+  md <- setNames(seu@meta.data[,which(colnames(seu@meta.data)==names(cor.features[i]))],rownames(seu@meta.data))
+  seu <- AddMetaData(seu,md,col.name = cor.features[i])
+}
+
+
+for (i in seq(length(plot.sets))) {
+  set.name <- names(plot.sets[i])
+  features <- plot.sets[[i]] # change set here
+  
+  message(set.name)
+  
+  dirName <- glue(here("data_230718/AddModuleScore/"),celltype)
+  if(!dir.exists(dirName)) {
+    dir.create(dirName, recursive = TRUE)
+    }
+  
+  pts <- VlnPlot(cell,
+                 features = features,
+                 pt.size = 0,
+                 ncol = 1,
+                 group.by = "condition2",
+                 split.by = "f.Timepoint",
+                 split.plot = TRUE,
+                 combine = FALSE,
+                 log=FALSE,
+                 same.y.lims = FALSE)
+
+  plots <- list()
+  
+  for (j in seq(length(pts))) {
+    message(features[j])
+    values <- unlist(df[,grep(features[j], colnames(df))])  
+    p <- pts[[j]] + ggtitle(glue(features[j],'\n',names(features[j]))) +
+      theme(plot.title=element_text(size=6),
+            axis.text.y = element_text(size=6),
+            axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+            axis.title=element_text(colour = "white"),
+            legend.text=element_text(size=6)) +
+      scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+      #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+      #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+      scale_fill_manual(values = c(Timepoint.colors[which(names(Timepoint.colors) == levels(cell$f.Timepoint)[1])],
+                                   Timepoint.colors[which(names(Timepoint.colors) == levels(cell$f.Timepoint)[2])]))
+    plots <- lappend(plots, p)
+  
+  outp <- plot_grid(plotlist=plots, ncol=5)
+  
+  ggsave(outp, device="jpeg",height=ceiling(length(plots)/5)*2,width=15,
+         filename = glue(dirName, '/', celltype,".",
+                         glue(set.name,".score.jpeg")))
+  }
+}
+
+# heatmap ======================================================================
+# look for DEGs from pathway genes
+genes <- unique(unname(unlist(pathway.sets)))
+degs <- read.csv(here("data_230718/DE/RM/CF_treated_t2_vs_CF_treated_t1/DEG/RM.CF_treated_t2_vs_CF_treated_t1.DEG-all.csv"))
+degs <- degs$gene
+features <- intersect(genes, degs)
+
+# group by individual
+cell.avg <- AverageExpression(cell,
+                              group.by = c("HTO_HTODemux"),
+                              slots="data",
+                              assays = "RNA",
+                              features = unique(unname(unlist(pathway.sets))),
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+Condition <- setNames(c(rep("ETI-treated",4),
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)),
+                       levels(cell.avg$HTO_HTODemux))
+Condition <- Condition[cell.avg$HTO_HTODemux]
+names(Condition) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Condition, col.name = "Condition")
+cell.avg$Condition <- factor(cell.avg$Condition,
+                             levels=c("ETI-treated", "CF-untreated","Healthy"))
+
+# add Timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(cell.avg$HTO_HTODemux))
+Timepoint <- Timepoint[cell.avg$HTO_HTODemux]
+names(Timepoint) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Timepoint, col.name = "Timepoint")
+cell.avg$Timepoint <- factor(cell.avg$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# add Subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(cell.avg$HTO_HTODemux))
+Subject <- Subject[cell.avg$HTO_HTODemux]
+names(Subject) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Subject, col.name = "Subject")
+cell.avg$Subject <- factor(cell.avg$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# heatmap using dittoSeq
+Condition.colors <- setNames(c("#a4133c","#fff3b0","#5b8e7d"),
+                              levels(cell.avg$Condition))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(cell.avg$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(cell.avg$Timepoint))
+
+pathway.sets
+for (i in seq(length(plot.sets))) {
+  set.name <- names(plot.sets[i])
+  message(set.name)
+  dirName <- glue(here("data_230718/AddModuleScore/"),celltype)
+  
+  plots <- list()
+  
+  for (j in plot.sets[[i]]) {
+    features <- intersect(degs, pathway.sets[[j]])
+    features <- intersect(features, rownames(cell.avg@assays$RNA@scale.data))
+    p <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+               genes=features,
+               order.by = c("Condition","Timepoint",),
+               annot.by = rev(c("Condition","Timepoint")),
+               heatmap.colors = cividis(256),
+               heatmap.colors.max.scaled = viridis(256),
+               width=unit(1/ncol(cell.avg), "npc"),
+               complex = TRUE,
+               scaled.to.max = FALSE,
+               cluster_cols = FALSE,
+               cluster_rows = FALSE,
+               name = "Scale",
+               fontsize=8,
+               annotation_colors = list("Condition"= Condition.colors,
+                                        "Subject" = Subject.colors,
+                                        "Timepoint" = Timepoint.colors),
+               heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                           legend_direction = "vertical"
+                                           ),
+               cellheight=16,
+               cellwidth=16
+               )))
+    p2 <- as.ggplot(p) + ggtitle(glue("DEGs\n", names(pathway.sets[i]))) + 
+      theme(plot.title=element_text(hjust=0.5, vjust=-10,size=10, face="bold"))
+    
+    plots <- lappend(plots, p2)
+  
+  outp <- plot_grid(plotlist=plots, ncol=5)
+  
+  # ggsave(outp, device="pdf",height=ceiling(length(plots)/5)*2,width=15,
+  #        filename = glue(dirName, '/', celltype,".",
+  #                        glue(set.name,".heatmap.pdf")))
+  }
+}
+outp
+# ==============================================================================
+
+outp <- plot_grid(plotlist=plots, ncol = 6)
+
+ggsave(outp, device="pdf", height=9, width=9,
+       filename=here("AddModuleScore",glue(levels(cell.s$celltype.3),".",
+                                           glue(set.name, ".",
+                                                levels(cell.s$condition1)[1], "_vs_",
+                                                levels(cell.s$condition1)[2],
+                                                ".score.pdf"))))
+
+# ==============================================================================
+
+pts <- VlnPlot(cell.s, 
+        features = set1,
+        pt.size = 0,
+        ncol = 1,
+        group.by = "celltype.1",
+        split.by = "condition1",
+        split.plot = TRUE,
+        combine = FALSE,
+        log=FALSE,
+        same.y.lims = FALSE)
+
+# plot split by condition
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  p <- pts[[i]] + ggtitle(glue(levels(cell.s$celltype.1),'\n',
+                               levels(cell.s$condition1)[1],"_vs_",
+                               levels(cell.s$condition1)[2],'\n',features[i])) +
+    theme(plot.title=element_text(size=10.5),
+          axis.text.y = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8)) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995)),
+                       )
+  ggsave(p, device="jpeg",height=4,width=4,
+         filename = glue(levels(cell.s$celltype.1),".",
+                         glue(levels(cell.s$condition1)[1], "_vs_",
+                              levels(cell.s$condition1)[2],".",features[i], ".score.jpeg")))
+}
+
+# plot split by celltype.1
+pts <- VlnPlot(cell.s, 
+        features = features,
+        pt.size = 0,
+        ncol = 1,
+        group.by = "condition1",
+        split.by = "celltype.1",
+        split.plot = TRUE,
+        combine = FALSE,
+        log=FALSE,
+        same.y.lims = FALSE)
+pts[1]
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+plots <- list()
+
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  p <- pts[[i]] + ggtitle(features[i]) +
+    theme(plot.title=element_text(size=10.5),
+          axis.text.y = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8)) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(values = c("#fca311","#457b9d"))
+  plots <- lappend(plots, p)
+  ggsave(p, device="jpeg",height=4,width=6,
+         filename = glue(features[i], ".score.jpeg"))
+}
+
+# plot split by celltype.3 =====================================================
+# celltype.1 for TRM
+celltype <- c("RM","TRM")
+cell.s <- subset(cell, celltype.3 %in% celltype)
+cell.s$celltype.3 <- fct_drop(cell.s$celltype.3)
+
+pts <- VlnPlot(cell.s, 
+        features = features,
+        pt.size = 0,
+        ncol = 1,
+        group.by = "condition1",
+        split.by = "celltype.3",
+        split.plot = TRUE,
+        combine = FALSE,
+        log=FALSE,
+        same.y.lims = FALSE)
+
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+plots <- list()
+
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  p <- pts[[i]] + ggtitle(features[i]) +
+    theme(plot.title=element_text(size=10.5),
+          axis.text.y = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8)) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(values = c("#fca311","#457b9d"))
+  plots <- lappend(plots, p)
+  ggsave(p, device="jpeg",height=4,width=6,
+         filename = glue(features[i], ".score.clusters124.jpeg"))
+}
+
+
+plots[1]
+# p <- pts[[13]]
+# p
+
+# split by timepoint
+p + ggtitle(glue(levels(cell.s$celltype.1),'\n',features[4])) +
+    theme(plot.title=element_text(size=14),
+          axis.text.y = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,
+                                     size=10),
+                               axis.title=element_text(size=0),
+                               legend.text=element_text(size=8)) +
+  scale_y_continuous(limits = unlist(quantile(cell.s@meta.data[,grep(features[4], colnames(cell.s@meta.data))],
+                                       c(0.001,0.999))))
+                     #expand = expansion(mult = c(0.1, -0.1)))
+# c(cell.s@meta.data[1])
+# celltype.1
+df <- cell.s@meta.data
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  p <- pts[[i]] + ggtitle(glue(levels(cell.s$celltype.1),'\n',features[i])) +
+    theme(plot.title=element_text(size=14),
+          axis.text.y = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8)) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.999)),
+                       )
+  ggsave(p, device="jpeg",height=4,width=4,
+         filename = glue(levels(cell.s$celltype.1),".","CF_treated_t1_vs_Healthy.",features[i], ".score.jpeg"))
+}
+
+# # celltype.2
+# for (i in seq(length(pts))) {
+#   message(features[i])
+#   values <- unlist(df[,grep(features[i], colnames(df))])
+#   #print(values[1:10])
+#   p <- pts[[i]] + ggtitle(glue(levels(cell.s$celltype.2),'\n',features[i])) +
+#     theme(plot.title=element_text(size=14),
+#           axis.text.y = element_text(size=10),
+#           axis.text.x = element_text(angle = 0, hjust = 0.5,size=10),
+#           axis.title=element_text(colour = "white"),
+#           legend.text=element_text(size=8)) + 
+#     scale_y_continuous(limits = quantile(values, c(0.001,0.999)))
+#   ggsave(p, device="jpeg",height=4,width=4,
+#          filename = glue(levels(cell.s$celltype.2),".",features[i], ".score.jpeg"))
+# }
+
+
+```
+
+Prepare object for heatmap
+```{r}
+seu <- readRDS(here("data_230628/SCEs/G000323.clustered.Zilionis.HLCA.mac.integrated.subclustered.annotated.scored.SEU.rds"))
+
+# add subject to metadata
+seu$HTO_HTODemux <- factor(seu$HTO_HTODemux,
+                           levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(seu$HTO_HTODemux))
+
+Subject <- Subject[seu$HTO_HTODemux]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# add Sample to metadata
+Sample <- setNames(c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"),levels(seu$HTO_HTODemux))
+
+Sample <- Sample[seu$HTO_HTODemux]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                          levels=c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"))
+
+# add condition1 to metadata
+condition1 <- setNames(c(rep("CF",8), # Trikafta indiv as treated
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition1 <- condition1[seu$HTO_HTODemux]
+names(condition1) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition1, col.name = "condition1")
+seu$condition1 <- factor(seu$condition1)
+
+# add condition2
+condition2 <- setNames(c(rep("ETI-treated",4), # Trikafta indiv as treated
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition2 <- condition2[seu$HTO_HTODemux]
+names(condition2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition2, col.name = "condition2")
+seu$condition2 <- factor(seu$condition2)
+
+# add condition3
+condition3 <- setNames(c(rep(c("ETI-treated_t1","ETI-treated_t2"),2),
+                         rep(c("CF-untreated_t1","CF-untreated_t2"),2),
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition3 <- condition3[seu$HTO_HTODemux]
+names(condition3) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition3, col.name = "condition3")
+seu$condition3 <- factor(seu$condition3)
+
+# add Timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(seu$HTO_HTODemux))
+Timepoint <- Timepoint[seu$HTO_HTODemux]
+names(Timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                             levels=c("T1","T2","N/A"))
+# assign colors
+Condition.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              levels(seu$condition1))
+
+Condition3.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              levels(seu$condition1))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(seu$Timepoint))
+
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu$Sample))
+
+```
+
+Scale data
+```{r}
+s <- seu
+seu <- subset(s, Annotation == "recMo/MΦ")
+seu <- ScaleData(seu)
+
+
+cell <- seu
+```
+
+(obsolete) Heatmap
+```{r}
+anno_df <- seu@meta.data %>%
+  dplyr::select(MΦ.subtype, Condition, Subject, Timepoint) %>%
+  dplyr::arrange(match(MΦ.subtype, levels(seu$MΦ.subtype)))
+
+ha <- HeatmapAnnotation(df = anno_df,
+                        col = list("MΦ.subtype"= Annotation.colours,
+                                   "Condition"= Condition.colors,
+                                   "Subject" = Subject.colors,
+                                   "Timepoint" = Timepoint.colors),
+                        annotation_name_gp= gpar(fontsize = 10,
+                                                 font = "bold"),
+                        show_annotation_name = FALSE,
+                        simple_anno_size = unit(0.4,"cm"),
+                        show_legend = FALSE)
+
+# heatmap legend
+lgd <- Legend(col_fun = circlize::colorRamp2(breaks = breaks,
+                                            colors = inferno(256)),
+             at = c(0, 0.25, 0.5, 0.75, 1),
+             title = "Scaled expression",
+             direction = "horizontal",
+             title_gp = gpar(fontsize=9,
+                             fontface="bold"),
+             labels_gp = gpar(fontsize=8),
+             grid_height = unit(4, "mm"))
+
+# annotation legend
+lgd1 = Legend(labels=levels(anno_df$MΦ.subtype),
+              legend_gp = gpar(fill = Annotation.colours),
+              title = "MΦ.subtype")
+lgd2 = Legend(labels=levels(anno_df$Condition),
+              legend_gp = gpar(fill = Condition.colors),
+              title = "Condition")
+lgd3 = Legend(labels=levels(anno_df$Subject),
+              legend_gp = gpar(fill = Subject.colors),
+              title = "Subject")
+lgd4 = Legend(labels=levels(anno_df$Timepoint),
+              legend_gp = gpar(fill = Timepoint.colors),
+              title = "Timepoint")
+
+pd = packLegend(lgd1, lgd2, lgd3, lgd4)
+
+f1g <- grid.grabExpr(list(
+  draw(Heatmap(m,
+             col=circlize::colorRamp2(breaks = breaks,
+                                 colors = inferno(256)),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                    legend_direction = "horizontal"),
+             name = "Scaled expression",
+             width = unit(3.5,"mm")*ncol(m),
+             #heatmap_width = unit(32, "cm"),
+             #heatmap_height = unit(19, "cm"),
+             cluster_rows = FALSE,
+             row_names_side = "left",
+             cluster_columns = FALSE,
+             show_column_names = FALSE,
+             row_names_gp = gpar(fontsize = 8),
+             column_title = NULL,
+             column_split = column_split,
+             show_heatmap_legend = FALSE,
+             top_annotation = ha),
+       ),
+  draw(lgd,
+       x = unit(0.98, "npc"),
+       y = unit(0.01, "npc"),
+       just = c("right","bottom")),
+  draw(pd,
+       x = unit(0.96,"npc"),
+       y = unit(0.5, "npc"),
+       just = c("right"))
+  ))
+
+dittoHeatmap(seu,
+             genes=intersect(rownames(seu@assays$RNA@scale.data),
+                             set3$INTERLEUKIN_8_PRODUCTION),
+             #order.by = c("MΦ.subtype","Condition","Subject","Timepoint"),
+             #order.by = c("MΦ.subtype","Condition","Sample"),
+             #annot.by = rev(c("MΦ.subtype","Condition","Subject","Timepoint")),
+             heatmap.colors.max.scaled = inferno(256),
+             width=unit(1/ncol(seu), "npc"),
+             complex = TRUE,
+             scaled.to.max = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             annotation_colors = list(
+                                      "Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors),
+             gaps_col=c(10,20,30,40,50,60,70),
+             legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+             name = "Scale",
+             fontsize_row=8,
+             fontface_row = "italic",
+             # annotation_legend_param = list(labels_gp = gpar(fontface="italic",
+             #                                fontsize=8)),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=12,
+             cellwidth=10
+             )
+```
+
+Results on 230618
+```{r}
+celltype <- "recMo/MΦ" # do separately for RM and TRM
+cell <- subset(seu, Annotation == celltype)
+cell$Annotation <- fct_drop(cell$Annotation)
+
+# plot all in a loop
+plot.sets <- setNames(list(set1, set2, set3, set4, set5),
+                      c("PRR", "Phago", "Inflam", "ROS", "MF"))
+
+condition.colors <- setNames(c("#ffc2d1", "#a3b18a", "#fca311", "#606c38", "#457b9d"),
+                             c("CF_treated_t1", "CF_treated_t2", "CF_untreated_t1", 
+                               "CF_untreated_t2","Healthy"))
+```
+
+Check distribution of pct.1 and pct.2 
+```{r}
+deg <- read.csv(here('data_230518/DE/RM/CF_treated_t2_vs_CF_treated_t1/DEG/RM.CF_treated_t2_vs_CF_treated_t1.DEG-up.csv'))
+dim(deg)
+# colored by p.adj
+ggplot(deg%>%dplyr::filter(p_val_adj < 0.000001),aes(x=pct.2,y=pct.1,color=p_val_adj)) +
+  geom_point() +
+  scale_color_gradientn(colors=rev(cividis(256))) +
+  theme_classic() 
+
+# colored by log2FC
+ggplot(deg,aes(x=pct.2,y=pct.1,color=avg_log2FC)) +
+  geom_point() +
+  scale_color_gradientn(colors=inferno(256)) +
+  theme_classic()
+
+seu@assays$RNA@counts
+
+
+
+
+
+
+
+```
+
+1. At timepoint 2, Trikfata-treated individuals had a more pro-inflammatory signatures than untreated individuals.
+```{r}
+# At timepoint 1
+# elevated IFN-gamma, IL-6, IL-8 pathways
+plots.CF_treated_t1_vs_CF_treated_t2 <- list()
+plots.CF_untreated_t1_vs_CF_untreated_t2 <- list()
+plots.CF_treated_t2_vs_CF_untreated_t2 <- list()
+
+# features <- c("INNATE_IMMUNE_RESPONSE",
+#               "TUMOR_NECROSIS_FACTOR_SUPERFAMILY_CYTOKINE_PRODUCTION",
+#               "TYPE_II_INTERFERON_MEDIATED_SIGNALING_PATHWAY",
+#               "RESPONSE_TO_TYPE_II_INTERFERON",
+#               "INTERLEUKIN_6_PRODUCTION",
+#               "INTERLEUKIN_8_PRODUCTION"
+#               )
+
+features <- c("LUNG_FIBROSIS",
+              "IL18_SIGNALING_PATHWAY",
+              "IL1_SIGNALING_PATHWAY",
+              "TNFALPHA_SIGNALING_PATHWAY",
+              "TOLLLIKE_RECEPTOR_SIGNALING_PATHWAY",
+              "IL10_ANTIINFLAMMATORY_SIGNALING_PATHWAY"
+              )
+
+compare <- c("CF_treated_t2","CF_untreated_t2")
+cell.s <- subset(cell, condition3 %in% compare)
+cell.s$condition3 <- fct_drop(cell.s$condition3)
+cell.s$Annotation <- fct_drop(cell.s$Annotation)
+
+pts <- VlnPlot(cell.s,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "Annotation",
+               split.by = "condition3",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+df <- cell.s@meta.data
+
+for (i in seq(length(pts))) {
+      message(features[i])
+      values <- unlist(df[,grep(features[i], colnames(df))])  
+      p <- pts[[i]] + ggtitle(glue(#levels(cell.s$celltype.3),'\n',
+                                   levels(cell.s$condition3)[1],"_vs_",
+                                   levels(cell.s$condition3)[2],
+                                   #'\n',features[i]
+                                   )) +
+        theme(plot.title=element_text(size=7),
+              axis.text.y = element_text(size=6),
+              axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+              axis.title=element_text(colour = "white"),
+              legend.text=element_text(size=6),
+              plot.background = element_blank()) +
+        scale_y_continuous(limits = quantile(values, c(0.001,0.9999))) +
+        #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+        #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+        scale_fill_manual(values = c(condition.colors[which(names(condition.colors) == levels(cell.s$condition3)[1])],
+                                     condition.colors[which(names(condition.colors) == levels(cell.s$condition3)[2])]))
+      plots.CF_treated_t2_vs_CF_untreated_t2 <- lappend(plots.CF_treated_t2_vs_CF_untreated_t2, p)
+}
+
+final.pts <- list()
+
+for (i in seq(length(features))) {
+  title <- ggdraw() + 
+    draw_label(
+      glue(features[i]),
+      fontface = 'bold',
+      x = 0.5,
+      size = 10
+      #hjust = 0
+    )
+  a <- list(plots.CF_treated_t1_vs_CF_treated_t2[[i]],
+            plots.CF_untreated_t1_vs_CF_untreated_t2[[i]],
+            plots.CF_treated_t2_vs_CF_untreated_t2[[i]])
+  
+  b <- plot_grid(title, plot_grid(plotlist=a, ncol=3), ncol = 1,
+                 rel_heights = c(0.1, 1)) + theme(plot.title = element_blank())
+  
+  final.pts <- lappend(final.pts, b)
+}
+
+plot_grid(plotlist = final.pts, nrow = ceiling(length(features)/2), ncol=2) + 
+  panel_border(size=4, remove = TRUE)
+
+ggsave(plot=last_plot(),
+       height=ceiling(8/3*4),width=16,
+       filename = "Phago.score.plot.t1.230618.pdf",
+       device="pdf")
+```
+
+2. At timepoint 2 (upon Trikafta treatment), the pro-inflammatory signature is reduced.
+a. comparing with CF_untreated:
+```{r}
+# At timepoint 1
+# elevated IFN-gamma, IL-6, IL-8 pathways
+plots.CF_treated_t1_vs_CF_treated_t2 <- list()
+plots.CF_untreated_t1_vs_CF_untreated_t2 <- list()
+plots.CF_treated_t2_vs_CF_untreated_t2 <- list()
+
+# features <- c("INNATE_IMMUNE_RESPONSE",
+#               "TUMOR_NECROSIS_FACTOR_SUPERFAMILY_CYTOKINE_PRODUCTION",
+#               "TYPE_II_INTERFERON_MEDIATED_SIGNALING_PATHWAY",
+#               "RESPONSE_TO_TYPE_II_INTERFERON",
+#               "INTERLEUKIN_6_PRODUCTION",
+#               "INTERLEUKIN_8_PRODUCTION"
+#               )
+# 
+# features <- c("PHAGOCYTOSIS_ENGULFMENT",
+#               "COMPLEMENT_ACTIVATION",
+#               "APOPTOTIC_CELL_CLEARANCE",
+#               "PHAGOSOME_LYSOSOME_FUSION",
+#               "PHAGOLYSOSOME_ASSEMBLY",
+#               "PHAGOSOME_ACIDIFICATION",
+#               "PHAGOSOME_MATURATION"
+#               )
+
+features <- names(set3)
+
+compare <- c("CF_treated_t1","CF_treated_t2")
+cell.s <- subset(cell, condition3 %in% compare)
+cell.s$condition3 <- fct_drop(cell.s$condition3)
+  
+pts <- VlnPlot(cell.s,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "Annotation",
+               split.by = "condition3",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+df <- seu@meta.data
+for (i in seq(length(pts))) {
+      message(features[i])
+      values <- unlist(df[,grep(features[i], colnames(df))])  
+      p <- pts[[i]] + ggtitle(glue(#levels(cell.s$celltype.3),'\n',
+                                   levels(cell.s$condition3)[1],"_vs_",
+                                   levels(cell.s$condition3)[2],
+                                   #'\n',features[i]
+                                   )) +
+        theme(plot.title=element_text(size=7),
+              axis.text.y = element_text(size=6),
+              axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+              axis.title=element_text(colour = "white"),
+              legend.text=element_text(size=6),
+              plot.background = element_blank()) +
+        scale_y_continuous(limits = quantile(values, c(0.001,0.9999))) +
+        #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+        #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+        scale_fill_manual(values = c(condition.colors[which(names(condition.colors) == levels(cell.s$condition3)[1])],
+                                     condition.colors[which(names(condition.colors) == levels(cell.s$condition3)[2])]))
+      plots.CF_untreated_t1_vs_CF_untreated_t2 <- lappend(plots.CF_untreated_t1_vs_CF_untreated_t2, p)
+}
+
+final.pts <- list()
+
+for (i in seq(length(features))) {
+  title <- ggdraw() + 
+    draw_label(
+      glue(features[i]),
+      fontface = 'bold',
+      x = 0.5,
+      size = 10
+      #hjust = 0
+    )
+  a <- list(plots.CF_treated_t1_vs_CF_treated_t2[[i]],
+            plots.CF_untreated_t1_vs_CF_untreated_t2[[i]],
+            plots.CF_treated_t2_vs_CF_untreated_t2[[i]])
+  
+  b <- plot_grid(title, plot_grid(plotlist=a, ncol=3), ncol = 1,
+                 rel_heights = c(0.1, 1)) + theme(plot.title = element_blank())
+  
+  final.pts <- lappend(final.pts, b)
+}
+
+ggsave(plot=plot_grid(plotlist = final.pts, nrow = 15, ncol=2) + 
+         panel_border(size=4, remove = TRUE),
+       height=48, width=16,
+       filename = "Inflam.score.plot.230628.pdf",
+       device="pdf")
+
+```
+
+a. comparing with Healthy:
+```{r}
+# At timepoint 1
+# elevated IFN-gamma, IL-6, IL-8 pathways
+plots.CF_treated_t1_vs_CF_treated_t2 <- list()
+plots.CF_treated_t1_vs_Healthy <- list()
+plots.CF_treated_t2_vs_Healthy <- list()
+
+# features <- c("INNATE_IMMUNE_RESPONSE",
+#               "TUMOR_NECROSIS_FACTOR_SUPERFAMILY_CYTOKINE_PRODUCTION",
+#               "TYPE_II_INTERFERON_MEDIATED_SIGNALING_PATHWAY",
+#               "RESPONSE_TO_TYPE_II_INTERFERON",
+#               "INTERLEUKIN_6_PRODUCTION",
+#               "INTERLEUKIN_8_PRODUCTION"
+#               )
+
+features <- c("PHAGOCYTOSIS_ENGULFMENT",
+              "COMPLEMENT_ACTIVATION",
+              "APOPTOTIC_CELL_CLEARANCE",
+              "PHAGOSOME_LYSOSOME_FUSION",
+              "PHAGOLYSOSOME_ASSEMBLY",
+              "PHAGOSOME_ACIDIFICATION",
+              "PHAGOSOME_MATURATION"
+              )
+
+compare <- c("CF_treated_t2","Healthy")
+cell.s <- subset(cell, condition1 %in% compare)
+cell.s$condition1 <- fct_drop(cell.s$condition1)
+cell.s$timepoint <- fct_drop(cell.s$timepoint)
+  
+pts <- VlnPlot(cell.s,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "celltype.3",
+               split.by = "condition1",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+for (i in seq(length(pts))) {
+      message(features[i])
+      values <- unlist(df[,grep(features[i], colnames(df))])  
+      p <- pts[[i]] + ggtitle(glue(#levels(cell.s$celltype.3),'\n',
+                                   levels(cell.s$condition1)[1],"_vs_",
+                                   levels(cell.s$condition1)[2],
+                                   #'\n',features[i]
+                                   )) +
+        theme(plot.title=element_text(size=7),
+              axis.text.y = element_text(size=6),
+              axis.text.x = element_text(angle = 0, hjust = 0.5,size=6),
+              axis.title=element_text(colour = "white"),
+              legend.text=element_text(size=6),
+              plot.background = element_blank()) +
+        scale_y_continuous(limits = quantile(values, c(0.001,0.9999))) +
+        #fca311 CF_untreated_t1 #457b9d Healthy #38a3a5 CF_treated_t2
+        #606c38 CF_untreated_t2 #ffc2d1 CF_treated_t1
+        scale_fill_manual(values = c(condition.colors[which(names(condition.colors) == levels(cell.s$condition1)[1])],
+                                     condition.colors[which(names(condition.colors) == levels(cell.s$condition1)[2])]))
+      plots.CF_treated_t2_vs_Healthy <- lappend(plots.CF_treated_t2_vs_Healthy, p)
+}
+
+final.pts <- list()
+
+for (i in seq(length(features))) {
+  title <- ggdraw() + 
+    draw_label(
+      glue(features[i]),
+      fontface = 'bold',
+      x = 0.5,
+      size = 10
+      #hjust = 0
+    )
+  a <- list(plots.CF_treated_t1_vs_CF_treated_t2[[i]],
+            plots.CF_treated_t1_vs_Healthy[[i]],
+            plots.CF_treated_t2_vs_Healthy[[i]])
+  
+  b <- plot_grid(title, plot_grid(plotlist=a, ncol=3), ncol = 1,
+                 rel_heights = c(0.1, 1)) + theme(plot.title = element_blank())
+  
+  final.pts <- lappend(final.pts, b)
+}
+
+plot_grid(plotlist = final.pts, nrow = ceiling(length(features)/2), ncol=2) + 
+  panel_border(size=4, remove = TRUE)
+
+ggsave(plot=last_plot(),
+       height=ceiling(8/3*4),width=16,
+       filename = "Phago.score.plot.t2.vsHealthy.230618.pdf",
+       device="pdf")
+
+```
+
+Plot heat map (lung fibrosis, IL-4 & IL-13, IL-10)
+```{r}
+cell <- subset(s,  Annotation == "recMo/MΦ")
+DefaultAssay(cell) <- "RNA"
+cell <- NormalizeData(cell)
+cell <- ScaleData(cell)
+Idents(cell) <- "condition3"
+cell$Condition <- cell$condition3
+
+plot_list <- list()
+
+# WP3624
+#wp3624 <- c("SPP1","CCL2","CCL4","CCL3","CXCL8","MMP9","IL1B","CXCL2","NFE2L2","CEBPB")
+RHSA6785807 <- c("CCL2","CXCL8","BCL2","TNFRSF1B","MMP9","CD36","ITGAX","IL1B","STAT1","FOS","VEGFA","JAK1","IL6R","HIF1A","JUNB","CDKN1A")
+RHSA6783783 <- c("CCL2","CCL4","CCL3","CXCL8","IL1RN","TNFRSF1B","IL1B","CXCL2","IL1R1","JAK1","CCR5")
+
+#features <- unique(c(wp3624, RHSA6785807, RHSA6783783))
+features <- unique(c(RHSA6785807, RHSA6783783))
+
+# group by individual ==========================================================
+cell.avg <- AverageExpression(cell,
+                              group.by = c("HTO_HTODemux"),
+                              slots="data",
+                              assays = "RNA",
+                              features = features,
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+Condition <- setNames(c(rep("ETI-treated",4),
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)),
+                       levels(cell.avg$HTO_HTODemux))
+Condition <- Condition[cell.avg$HTO_HTODemux]
+names(Condition) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Condition, col.name = "Condition")
+cell.avg$Condition <- factor(cell.avg$Condition,
+                             levels=c("ETI-treated", "CF-untreated","Healthy"))
+
+# add Timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(cell.avg$HTO_HTODemux))
+Timepoint <- Timepoint[cell.avg$HTO_HTODemux]
+names(Timepoint) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Timepoint, col.name = "Timepoint")
+cell.avg$Timepoint <- factor(cell.avg$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# add Subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(cell.avg$HTO_HTODemux))
+Subject <- Subject[cell.avg$HTO_HTODemux]
+names(Subject) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Subject, col.name = "Subject")
+cell.avg$Subject <- factor(cell.avg$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# heatmap using dittoSeq
+Condition.colors <- setNames(c("#a4133c","#fff3b0","#5b8e7d"),
+                              levels(cell.avg$Condition))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(cell.avg$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(cell.avg$Timepoint))
+
+
+# get the matrix
+m <- dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             #order.by = c("Condition","Timepoint","Subject"),
+             order.by = c("Condition","Subject","Timepoint"),
+             annot.by = rev(c("Condition","Subject","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=16
+             )
+m
+
+f3a <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint","Subject"),
+             annot.by = rev(c("Condition","Subject","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=16
+             )))
+f3a
+# group by Condition ===========================================================
+cell.avg <- AverageExpression(cell,
+                              group.by = c("Condition"),
+                              slots="data",
+                              assays = "RNA",
+                              features = features,
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("CF-untreated", "CF-untreated","ETI-treated", "ETI-treated", "Healthy"),
+                                        levels=c("ETI-treated", "CF-untreated","Healthy")),
+                        col.name="Condition")
+
+# add Timepoint to metadata
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("T1","T2","T1","T2","N/A"),
+                                        levels=c("T1", "T2","N/A")),
+                        col.name="Timepoint")
+
+m.v2 <- dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint"),
+             annot.by = rev(c("Condition","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=20
+             )
+
+f3a.v2 <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint"),
+             annot.by = rev(c("Condition","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=20
+             )))
+
+# DEGs from ETI-treated t2 vs CF-untreated t2
+wp3624 <- c("SPP1","CXCL8","CCL4","CXCL2","IL1B","NFE2L2","SERPINA1")
+RHSA6785807 <- c("CXCL8","CCL4","CXCL2","IL1B")
+RHSA6783783 <- c("CXCL8","IL1B","FOS","JUNB","ITGB2")
+features <- unique(c(wp3624, RHSA6785807, RHSA6783783))
+
+cell.avg <- AverageExpression(cell,
+                              group.by = c("Condition"),
+                              slots="data",
+                              assays = "RNA",
+                              features = features,
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("ETI-treated", "ETI-treated", "CF-untreated", "CF-untreated","Healthy"),
+                                        levels=c("ETI-treated", "CF-untreated","Healthy")),
+                        col.name="Condition")
+
+# add Timepoint to metadata
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("T1","T2","T1","T2","N/A"),
+                                        levels=c("T1", "T2","N/A")),
+                        col.name="Timepoint")
+
+m.v3 <- dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = rev(c("Condition","Timepoint")),
+             annot.by = c("Condition","Timepoint"),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=20
+             )
+layout = "AAAAABBBBBCCCCC\nAAAAABBBBBCCCCC\nAAAAABBBBBCCCCC"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(m) + ggtitle("ETI-treated_T2 vs ETI-treated_T1 [gpBy sample]\nLung fibrosis + IL-4 & IL-13 signaling + IL-10 signaling DEGs") + theme(plot.title=element_text(hjust=0.5, size=10, face="bold")) +
+  as.ggplot(m.v2) + ggtitle("ETI-treated_T2 vs ETI-treated_T1 DEGs [gpBy condition]\nLung fibrosis + IL-4 & IL-13 signaling + IL-10 signaling DEGs") + theme(plot.title=element_text(hjust=0.5, size=10, face="bold")) +
+  as.ggplot(m.v3) + ggtitle("ETI-treated_T2 vs ETI-untreated_T2 DEGs [gpBy condition]\nLung fibrosis + IL-4 & IL-13 signaling + IL-10 signaling DEGs") + theme(plot.title=element_text(hjust=0.5, size=10, face="bold")) +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=10,
+       width=18,
+       dpi=1200,
+       filename = "fibrosis.heatmap.230723.jpeg")
+
+
+f3a + f3a
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=8,
+       width=12,
+       dpi=1200,
+       filename = "fibrosis.heatmap.jpeg")
+
+
+# 230920
+layout = "AAAAA\nBBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+# m +
+#   m.v2 +
+#   plot_layout(design = layout) +
+#   #plot_annotation(tag_levels = "A") & 
+#   theme(plot.tag = element_text(size = 14, face = "bold", family="Arial"))
+
+m+m.v2
+ggsave(plot=as.ggplot(m) + as.ggplot(m.v2),
+       device="jpeg",
+       height=6,
+       width=10,
+       dpi=1600,
+       filename = "230920.heatmap.jpeg")
+
+# layout =======================================================================
+layout = "AAAAA\nBBBBB\nBBBBB\nBBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+f1d +
+  f1e +
+  f1f + 
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+
+# obsolete =====================================================================
+p <- DoHeatmap(cell.avg,
+            #assay = "RNA",
+            features = rownames(cell.avg@assays$RNA@scale.data),
+            slot='scale.data',
+            group.colors = condition.colors,
+            group.by = "condition3",
+            group.bar.height = 0.05,
+            size=3,
+            label = FALSE, 
+            #raster=FALSE,
+            #disp.min=-1,
+            #slot="scale.data",
+            draw.lines = FALSE,
+            #lines.width = 1,
+            angle = 45,
+            hjust=0,
+            ) +
+    ggtitle("DEGs") +
+    #guides(color="none") +
+    scale_fill_gradientn(colors=cividis(256),
+                         #colors=rev(brewer.pal(11,"RdBu")),
+                         #na.value = "white"
+                         ) +
+    theme(axis.text=element_text(size=8, face="bold"),
+          #legend.box = element_blank(),
+          plot.title = element_text(hjust = 0.3, size=9, face="bold"),
+          legend.text = element_text(size=6),
+          legend.position="right",
+          #legend.spacing.y = unit(0, 'cm')
+          )
+
+p
+
+
+for (i in seq(length(features))) {
+  cell.avg <- AverageExpression(cell,
+                                slots="data",
+                                assays = "RNA",
+                                features = set3[[features[i]]],
+                                return.seurat = TRUE,
+                                )
+
+  cell.avg$condition1 <- rownames(cell.avg@meta.data)
+  Idents(cell.avg) <- "condition1"
+  
+  # sort the scale.data based on expression in CF_treated_t1
+  #cell.avg@assays$RNA@scale.data <- cell.avg@assays$RNA@scale.data[order(cell.avg@assays$RNA@scale.data[,1],decreasing=TRUE),]
+  
+  p <- DoHeatmap(cell.avg,
+            #assay = "RNA",
+            features = rownames(cell.avg@assays$RNA@scale.data),
+            slot='scale.data',
+            group.colors = condition.colors,
+            group.by = "condition3",
+            group.bar.height = 0.05,
+            size=3,
+            label = FALSE, 
+            #raster=FALSE,
+            #disp.min=-1,
+            #slot="scale.data",
+            draw.lines = FALSE,
+            #lines.width = 1,
+            angle = 45,
+            hjust=0,
+            ) +
+    ggtitle(features[i]) +
+    #guides(color="none") +
+    scale_fill_gradientn(colors=cividis(256),
+                         #colors=rev(brewer.pal(11,"RdBu")),
+                         #na.value = "white"
+                         ) +
+    theme(axis.text=element_text(size=8, face="bold"),
+          #legend.box = element_blank(),
+          plot.title = element_text(hjust = 0.3, size=9, face="bold"),
+          legend.text = element_text(size=6),
+          legend.position="right",
+          #legend.spacing.y = unit(0, 'cm')
+          )
+  
+  #p$data <- p$data[order(p$data$Expression, decreasing = TRUE),]
+  
+  plot_list <- lappend(plot_list, p)
+  ggsave(p, device="jpeg",height=ceiling(nrow(cell.avg@assays$RNA@scale.data)/6),width=4,
+         filename = glue(celltype,".",features[i], ".heatmap.jpeg"), limitsize = FALSE)
+}
+
+plot_list[[3]]
+
+  ggsave(plot_list[[i]], device="jpeg",height=ceiling(nrow(cell.avg@assays$RNA@scale.data)/6),width=4,
+         filename = glue(celltype,".",features[3], ".heatmap.jpeg"))
+
+# GetAssayData(cell.avg)
+# mtx <- GetAssayData(cell.avg,slot="counts")
+# par(mar=c(7,4,4,2)+0.1) 
+# 
+# heatmap.2(mtx, 
+#           col=cividis(256),
+#           #col=rev(brewer.pal(11,"RdBu")[2:10]),
+#           Rowv=TRUE,
+#           Colv = FALSE,
+#           trace = "none", density.info = "none",
+#           cexRow=0.9, 
+#           cexCol=0.8,
+#           margins=c(12,8),
+#           dendrogram = "row",
+#           #ColSideColors = cc,
+#           scale="row",
+#           key=TRUE, symkey=TRUE,
+#           key.title = "value",
+#           )
+# 
+# dev.off()
+
+
+```
+
+Plot heat map (IL-18, IL-1 signaling, TLR Cascade)
+```{r}
+cell <- subset(seu, Annotation == "recMo/MΦ")
+cell <- ScaleData(cell)
+Idents(cell) <- "condition3"
+cell$Condition <- cell$condition3
+
+plot_list <- list()
+
+# DEGs
+WP4754 <- c("SPP1","CCL2","CCL4","CCL3","IER3","CXCL8","PLA2G7","NFKBIA","CD83","PRKCB","NFKB1","TNFAIP3","BCL2","MMP9","CD36","ATF3","IL1B","CXCL2","REL","FOS","CFLAR","VEGFA","JUN","NFKBIZ","IL18BP","BIRC3","CEBPB")
+WP195 <- c("CCL2","NFKBIA","NFKB1","IRAK2","IL1B","REL","IL1R1","SQSTM1","JUN")
+RHSA166016 <- c("NFKBIA","NFKB1","CTSL","IRAK2","CD36","TRAF3","FOS","CTSB","DUSP6","JUN","UBC","UBE2D3","TANK","BIRC3","CD180")
+
+features <- unique(c(WP4754, WP195, RHSA166016))
+
+# group by individual ==========================================================
+cell.avg <- AverageExpression(cell,
+                              group.by = c("HTO_HTODemux"),
+                              slots="data",
+                              assays = "RNA",
+                              features = features,
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+Condition <- setNames(c(rep("ETI-treated",4),
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)),
+                       levels(cell.avg$HTO_HTODemux))
+Condition <- Condition[cell.avg$HTO_HTODemux]
+names(Condition) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Condition, col.name = "Condition")
+cell.avg$Condition <- factor(cell.avg$Condition,
+                             levels=c("ETI-treated", "CF-untreated","Healthy"))
+
+# add Timepoint to metadata
+Timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(cell.avg$HTO_HTODemux))
+Timepoint <- Timepoint[cell.avg$HTO_HTODemux]
+names(Timepoint) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Timepoint, col.name = "Timepoint")
+cell.avg$Timepoint <- factor(cell.avg$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# add Subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(cell.avg$HTO_HTODemux))
+Subject <- Subject[cell.avg$HTO_HTODemux]
+names(Subject) <- colnames(cell.avg)
+cell.avg <- AddMetaData(cell.avg, metadata = Subject, col.name = "Subject")
+cell.avg$Subject <- factor(cell.avg$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# heatmap using dittoSeq
+Condition.colors <- setNames(c("#a4133c","#fff3b0","#5b8e7d"),
+                              levels(cell.avg$Condition))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(cell.avg$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(cell.avg$Timepoint))
+
+
+# get the matrix
+m <- dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint","Subject"),
+             annot.by = rev(c("Condition","Subject","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=16
+             )
+m
+
+f3a <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint","Subject"),
+             annot.by = rev(c("Condition","Subject","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Subject" = Subject.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=16
+             )))
+f3a
+# group by Condition ===========================================================
+cell.avg <- AverageExpression(cell,
+                              group.by = c("Condition"),
+                              slots="data",
+                              assays = "RNA",
+                              features = features,
+                              return.seurat = TRUE,
+                              )
+
+# add HTO_HTODemux to metadata
+cell.avg$HTO_HTODemux <- factor(paste0("Human_HTO_",sapply(strsplit(rownames(cell.avg@meta.data),"_"),"[[",3)),
+                                levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+
+# add Condition
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("ETI-treated", "ETI-treated", "CF-untreated", "CF-untreated","Healthy"),
+                                        levels=c("ETI-treated", "CF-untreated","Healthy")),
+                        col.name="Condition")
+
+# add Timepoint to metadata
+cell.avg <- AddMetaData(cell.avg,
+                        metadata=factor(c("T1","T2","T1","T2","N/A"),
+                                        levels=c("T1", "T2","N/A")),
+                        col.name="Timepoint")
+
+m.v2 <- dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint"),
+             annot.by = rev(c("Condition","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=20
+             )
+
+f3a.v2 <- grid.grabExpr(draw(dittoHeatmap(cell.avg,
+             genes=rownames(cell.avg@assays$RNA@scale.data),
+             order.by = c("Condition","Timepoint"),
+             annot.by = rev(c("Condition","Timepoint")),
+             heatmap.colors = cividis(256),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(cell.avg), "npc"),
+             complex = TRUE,
+             scaled.to.max = FALSE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             name = "Scale",
+             fontsize=8,
+             annotation_colors = list("Condition"= Condition.colors,
+                                      "Timepoint" = Timepoint.colors),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             cellheight=16,
+             cellwidth=20
+             )))
+
+
+layout = "AAAAABBBBB\nAAAAABBBBB\nAAAAABBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(m) + ggtitle("ETI-treated_T2 vs ETI-treated_T1 DEGs \nIL-18 signaling + IL-1 signaling + TLR cascade DEGs [gpBy sample]") + theme(plot.title=element_text(hjust=0.5, size=10, face="bold")) +
+  as.ggplot(m.v2) + ggtitle("ETI-treated_T2 vs ETI-treated_T1 \nIL-18 signaling + IL-1 signaling + TLR cascade DEGs [gpBy condition]") + theme(plot.title=element_text(hjust=0.5, size=10, face="bold")) +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=10,
+       width=12,
+       dpi=1200,
+       filename = "proinflam.heatmap.230723.jpeg")
+
+```
+
+Geom_violin pathway score
+```{r}
+# Try including Healthy in the violin plot =====================================
+cell.vln <- subset(seu, Annotation == "recMo/MΦ")
+
+# create a fake timepoint for healthy samples
+f.Timepoint <- setNames(c(rep(c("T1","T2"),5)), levels(cell.vln$HTO_HTODemux))
+f.Timepoint <- f.Timepoint[cell.vln$HTO_HTODemux]
+names(f.Timepoint) <- colnames(cell.vln)
+cell.vln <- AddMetaData(cell.vln, metadata = f.Timepoint, col.name = "f.Timepoint")
+cell.vln$f.Timepoint <- factor(cell.vln$f.Timepoint,
+                             levels=c("T1","T2"))
+
+
+features <- c("IL18_SIGNALING_PATHWAY", "IL1_SIGNALING_PATHWAY", "TOLL_LIKE_RECEPTOR_CASCADES")
+df <- cell.vln@meta.data
+
+plots <- list()
+pts <- VlnPlot(cell.vln,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "Condition",
+               split.by = "f.Timepoint",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  
+  p <- pts[[i]] +
+    ggtitle(names(title[i])) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(#aesthetics = aes(x=f.Timepoint),
+                      values = c("#A1CAF1","#0067A5")) +
+    theme(plot.title=element_text(size=10),
+          axis.text.y = element_text(size=8),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=8),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8))
+  
+  plots <- lappend(plots, p)
+}
+
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 100)
+plots[[1]] + NoLegend() + plots[[2]] + NoLegend() + plots[[3]]
+ggsave(filename = "lung_fibrosis.vlnplot.withHealthy.230723.jpeg",
+       device="jpeg",
+       dpi=600,
+       height=3,
+       width=9)
+
+
+# split by subject =============================================================
+# add Subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC","HC"),levels(cell.vln$HTO_HTODemux))
+Subject <- Subject[cell.vln$HTO_HTODemux]
+names(Subject) <- colnames(cell.vln)
+cell.vln <- AddMetaData(cell.vln, metadata = Subject, col.name = "Subject")
+cell.vln$Subject <- factor(cell.vln$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC"))
+
+df <- cell.vln@meta.data
+
+plots <- list()
+pts <- VlnPlot(cell.vln,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "Subject",
+               split.by = "f.Timepoint",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  
+  p <- pts[[i]] +
+    ggtitle(names(title[i])) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(#aesthetics = aes(x=f.Timepoint),
+                      values = c("#A1CAF1","#0067A5")) +
+    theme(plot.title=element_text(size=10),
+          axis.text.y = element_text(size=8),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=8),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8))
+  
+  plots <- lappend(plots, p)
+}
+
+plots[[1]] + NoLegend() + plots[[2]] + NoLegend() + plots[[3]]
+ggsave(filename = "lung_fibrosis.vlnplot.splitbyIndiv.230723.jpeg",
+       device="jpeg",
+       dpi=600,
+       height=3,
+       width=15)
+
+# Without Healthy ==============================================================
+cell.vln <- subset(seu, Annotation == "recMo/MΦ" & Condition != "Healthy")
+cell.vln$Condition <- fct_drop(cell.vln$Condition)
+cell.vln$Timepoint <- fct_drop(cell.vln$Timepoint)
+
+# plot all features
+features <- c("LUNG_FIBROSIS", "INTERLEUKIN_10_SIGNALING", "INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING")
+df <- cell.vln@meta.data
+values <- unlist(df[,grep(features[], colnames(df))])
+
+pts <- VlnPlot(cell.vln,
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "Condition",
+               split.by = "Timepoint",
+               split.plot = TRUE,
+               combine = FALSE,
+               log=FALSE,
+               same.y.lims = FALSE)
+
+title <- setNames(features,c("Lung fibrosis", "IL-10 Signaling", "IL-4 & IL-13 Signaling"))
+
+plots <- list()
+for (i in seq(length(pts))) {
+  message(features[i])
+  values <- unlist(df[,grep(features[i], colnames(df))])
+  
+  p <- pts[[i]] +
+    ggtitle(names(title[i])) +
+    scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(#aesthetics = aes(x=f.Timepoint),
+                      values = c("#A1CAF1","#0067A5")) +
+    theme(plot.title=element_text(size=10),
+          axis.text.y = element_text(size=8),
+          axis.text.x = element_text(angle = 0, hjust = 0.5,size=8),
+          axis.title=element_text(colour = "white"),
+          legend.text=element_text(size=8))
+  
+  plots <- lappend(plots, p)
+}
+
+plots[[1]] + NoLegend() + plots[[2]] + NoLegend() + plots[[3]]
+
+ggsave(filename="fibrosis.pathway.230719.jpeg",
+       device="jpeg",
+       height=3, width=9,
+       dpi=600)
+
+```
+
+Plot density of pathway score
+```{r}
+# Try including Healthy in the violin plot =====================================
+cell.vln <- subset(seu, Annotation == "recMo/MΦ" & condition2 != "CF_untreated")
+
+vln.df = cell.vln@meta.data %>% dplyr::select(
+                                         INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING, 
+                                         INTERLEUKIN_10_SIGNALING, 
+                                         LUNG_FIBROSIS, 
+                                         condition3, 
+                                         Subject, 
+                                         Timepoint)
+vln.df$condition3 <- factor(vln.df$condition3, levels=c("Healthy", "ETI-treated_t2", "ETI-treated_t1"))
+# original
+ggplot(vln.df  %>% dplyr::filter(Condition == "ETI-treated"), 
+       aes(x=LUNG_FIBROSIS, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Lung fibrosis") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12)) +
+
+ggplot(vln.df  %>% dplyr::filter(Condition == "ETI-treated"), 
+       aes(x=INTERLEUKIN_10_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("IL-10 Signaling") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12)) +
+
+ggplot(vln.df  %>% dplyr::filter(Condition == "ETI-treated"), 
+       aes(x=INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("IL-4 & IL-13 Signaling") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12))
+
+# fill by condition3 230920: ETI-treated T1 vs Healthy / ETI-treated T2 vs Healthy
+(ggplot(vln.df, 
+       aes(x=LUNG_FIBROSIS, fill=condition3)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = rev(c("#a4133c","#fff3b0","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Lung fibrosis") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12)) +
+
+ggplot(vln.df, 
+       aes(x=INTERLEUKIN_10_SIGNALING, fill=condition3)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = rev(c("#a4133c","#fff3b0","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("IL-10 Signaling") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12)) +
+
+ggplot(vln.df, 
+       aes(x=INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING, fill=condition3)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = rev(c("#a4133c","#fff3b0","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("IL-4 & IL-13 Signaling") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12)))
+
+# ==============================================================================
+
+  
+p1 <- ggplot(vln.df, 
+       aes(x=LUNG_FIBROSIS, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("Lung fibrosis") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+p2 <-ggplot(vln.df, 
+       aes(x=INTERLEUKIN_10_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("IL-10 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+p3 <-ggplot(vln.df, 
+       aes(x=INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("IL-4 & IL-13 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+ggsave(filename="fibrosis.densityPlot.230719.jpeg",
+       dpi = 600,
+       device="jpeg",
+       height=10,
+       width=8)
+
+
+# rearrange dataframe
+ds.df <- data.frame(Signature.score = c(vln.df$LUNG_FIBROSIS, 
+                                        vln.df$INTERLEUKIN_10_SIGNALING,
+                                        vln.df$INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING),
+                    Pathway = rep(c("LUNG_FIBROSIS","INTERLEUKIN_10_SIGNALING","INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING"),
+                                  each=nrow(vln.df)),
+                    Condition = rep(vln.df$Condition,3),
+                    Subject = rep(vln.df$Subject,3),
+                    Timepoint = rep(vln.df$Timepoint,3)
+                    )
+ds.df$Pathway <- factor(ds.df$Pathway,
+                        levels=c("LUNG_FIBROSIS","INTERLEUKIN_10_SIGNALING","INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING"))
+
+titles <- c("LUNG_FIBROSIS" = "Lung fibrosis",
+           "INTERLEUKIN_10_SIGNALING" = "IL-10 signaling",
+           "INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING" = "IL-4 & IL-13 signaling",
+           "ETI-treated" = "ETI-treated",
+           "CF-untreated" = "CF-untreated")
+
+p <- {ggplot(ds.df, 
+       aes(x=Signature.score, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ylab("Density") +
+  scale_x_continuous(
+    labels = scales::label_number(accuracy = 0.1),
+    breaks = c(-0.1,0.2,0.5,0.8)) +
+  #ggtitle("IL-4 & IL-13 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        axis.text = element_text(size=8,),
+        strip.text.x = element_text(face="bold"),
+        strip.text.y = element_text(face="bold",
+                                    colour = "black"),
+        legend.title = element_text(size=10),
+        legend.key.size = unit(4,"mm"),
+        panel.spacing.x = unit(0.2, "lines"),
+        panel.spacing.y = unit(0, "lines"),
+        strip.background.x = element_rect(fill="#e3d5ca")) +
+  facet_grid(Condition~Pathway, labeller = as_labeller(titles))} %>%
+  modify_facet_appearance(strip.background.y.fill = c("#a4133c","#fff3b0"),
+                          strip.text.y.col = c("white","black"))
+
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(p)
+ggsave(plot=last_plot(),
+       filename="fibrosis.densityPlot.v2.230720.jpeg",
+       device="jpeg",
+       height=3,
+       width=6,
+       dpi=1600)
+
+
+p1/p2/p3
+
+```
+
+
+# Plot density of pathway score (phagocytosis) 230920
+```{r}
+# Try including Healthy in the violin plot =====================================
+cell.vln <- subset(seu, Annotation == "recMo/MΦ" & condition2 != "CF_untreated")
+
+vln.df = cell.vln@meta.data %>% dplyr::select(
+                                         PHAGOSOME_ACIDIFICATION,
+                                         PHAGOLYSOSOME_ASSEMBLY,
+                                         PHAGOSOME_LYSOSOME_FUSION, 
+                                         condition3, 
+                                         Subject, 
+                                         Timepoint)
+vln.df$condition3 <- factor(vln.df$condition3, levels=c("ETI-treated_t1","Healthy", "ETI-treated_t2"))
+
+ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"), 
+       aes(y=factor(condition3), x=PHAGOSOME_ACIDIFICATION)) +
+  geom_density_ridges2(scale = 0.8)
+
+ggplot(iris, aes(x = Sepal.Length, y = Species)) + geom_density_ridges(scale = 0.9)
+
+
+
+
+# fill by condition3 230920: ETI-treated T1 vs ETI-treated T2
+a <- (ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"), 
+       aes(x=PHAGOSOME_ACIDIFICATION, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome acidification") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()) +
+
+ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"),
+       aes(x=PHAGOLYSOSOME_ASSEMBLY, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagolysosome assembly") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()) +
+
+ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"),
+       aes(x=PHAGOSOME_LYSOSOME_FUSION, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome-lysosome fusion") +
+  #guides(color = guide_legend(override.aes=list(shape = 15))) +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()))
+a  
+# fill by condition3 230920: CF-untreated T1 vs CF-untreated T2
+cell.vln <- subset(seu, Annotation == "recMo/MΦ" & condition2 != "CF_treated")
+
+vln.df = cell.vln@meta.data %>% dplyr::select(
+                                         PHAGOSOME_ACIDIFICATION,
+                                         PHAGOLYSOSOME_ASSEMBLY,
+                                         PHAGOSOME_LYSOSOME_FUSION, 
+                                         condition3, 
+                                         Subject, 
+                                         Timepoint)
+vln.df$condition3 <- factor(vln.df$condition3, levels=c("CF-untreated_t1","Healthy", "CF-untreated_t2"))
+
+#ggplot(iris, aes(x = Sepal.Length, y = Species)) + geom_density_ridges(scale = 1)
+
+b <- (ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"), 
+       aes(x=PHAGOSOME_ACIDIFICATION, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome acidification") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()) +
+
+ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"),
+       aes(x=PHAGOLYSOSOME_ASSEMBLY, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagolysosome assembly") +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()) +
+
+ggplot(vln.df %>% dplyr::filter(condition3 != "Healthy"),
+       aes(x=PHAGOSOME_LYSOSOME_FUSION, fill=Timepoint)) +
+  geom_density(alpha=0.7) +
+  scale_fill_manual(values = kelly(22)[c(6,12)]) +
+  #scale_fill_manual(values = rev(c("#a4133c","#5b8e7d"))) +
+  theme_classic() +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome-lysosome fusion") +
+  #guides(color = guide_legend(override.aes=list(shape = 15))) +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        legend.key.size = unit(1,"line"),
+        legend.title = element_blank()))
+
+a/b
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+a/b
+ggsave(plot=last_plot(),
+       filename="pathway.densityPlot.230920.jpeg",
+       device="jpeg",
+       height=6,
+       width=12,
+       dpi=1600)
+
+# ==============================================================================
+# old
+p1 <- ggplot(vln.df, 
+       aes(x=LUNG_FIBROSIS, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("Lung fibrosis") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+p2 <-ggplot(vln.df, 
+       aes(x=INTERLEUKIN_10_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("IL-10 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+p3 <-ggplot(vln.df, 
+       aes(x=INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("IL-4 & IL-13 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~Condition)
+
+ggsave(filename="fibrosis.densityPlot.230719.jpeg",
+       dpi = 600,
+       device="jpeg",
+       height=10,
+       width=8)
+
+# 230920
+p1 <- ggplot(vln.df, 
+       aes(x=PHAGOSOME_ACIDIFICATION, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome acidification") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~condition3)
+
+p2 <-ggplot(vln.df, 
+       aes(x=PHAGOLYSOSOME_ASSEMBLY, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("Phagolysosome assembly") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~condition3)
+
+p3 <-ggplot(vln.df, 
+       aes(x=PHAGOSOME_LYSOSOME_FUSION, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ggtitle("Phagosome-lysosome fusion") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        strip.text.x = element_text(face="bold"),
+        strip.background = element_rect(fill="grey")) +
+  facet_grid(~condition3)
+
+
+
+p1
+
+
+# rearrange dataframe
+# old ==========================================================================
+ds.df <- data.frame(Signature.score = c(vln.df$LUNG_FIBROSIS, 
+                                        vln.df$INTERLEUKIN_10_SIGNALING,
+                                        vln.df$INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING),
+                    Pathway = rep(c("LUNG_FIBROSIS","INTERLEUKIN_10_SIGNALING","INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING"),
+                                  each=nrow(vln.df)),
+                    Condition = rep(vln.df$Condition,3),
+                    Subject = rep(vln.df$Subject,3),
+                    Timepoint = rep(vln.df$Timepoint,3)
+                    )
+ds.df$Pathway <- factor(ds.df$Pathway,
+                        levels=c("LUNG_FIBROSIS","INTERLEUKIN_10_SIGNALING","INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING"))
+
+titles <- c("LUNG_FIBROSIS" = "Lung fibrosis",
+           "INTERLEUKIN_10_SIGNALING" = "IL-10 signaling",
+           "INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING" = "IL-4 & IL-13 signaling",
+           "ETI-treated" = "ETI-treated",
+           "CF-untreated" = "CF-untreated")
+
+p <- {ggplot(ds.df, 
+       aes(x=Signature.score, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ylab("Density") +
+  scale_x_continuous(
+    labels = scales::label_number(accuracy = 0.1),
+    breaks = c(-0.1,0.2,0.5,0.8)) +
+  #ggtitle("IL-4 & IL-13 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        axis.text = element_text(size=8,),
+        strip.text.x = element_text(face="bold"),
+        strip.text.y = element_text(face="bold",
+                                    colour = "black"),
+        legend.title = element_text(size=10),
+        legend.key.size = unit(4,"mm"),
+        panel.spacing.x = unit(0.2, "lines"),
+        panel.spacing.y = unit(0, "lines"),
+        strip.background.x = element_rect(fill="#e3d5ca")) +
+  facet_grid(Condition~Pathway, labeller = as_labeller(titles))} %>%
+  modify_facet_appearance(strip.background.y.fill = c("#a4133c","#fff3b0"),
+                          strip.text.y.col = c("white","black"))
+
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(p)
+ggsave(plot=last_plot(),
+       filename="fibrosis.densityPlot.v2.230720.jpeg",
+       device="jpeg",
+       height=3,
+       width=6,
+       dpi=1600)
+
+# new ==========================================================================
+# Try including Healthy in the violin plot =====================================
+cell.vln <- subset(seu, Annotation == "recMo/MΦ" & condition2 != "Healthy")
+
+vln.df = cell.vln@meta.data %>% dplyr::select(
+                                         PHAGOSOME_ACIDIFICATION,
+                                         PHAGOLYSOSOME_ASSEMBLY,
+                                         PHAGOSOME_LYSOSOME_FUSION, 
+                                         condition2, 
+                                         Subject, 
+                                         Timepoint)
+vln.df$condition2 <- factor(vln.df$condition2, levels=c("ETI-treated", "CF-untreated"))
+
+ds.df <- data.frame(Signature.score = c(vln.df$PHAGOSOME_ACIDIFICATION, 
+                                        vln.df$PHAGOLYSOSOME_ASSEMBLY,
+                                        vln.df$PHAGOSOME_LYSOSOME_FUSION),
+                    Pathway = rep(c("PHAGOSOME_ACIDIFICATION","PHAGOLYSOSOME_ASSEMBLY","PHAGOSOME_LYSOSOME_FUSION"),
+                                  each=nrow(vln.df)),
+                    Condition = rep(vln.df$condition2,3),
+                    Subject = rep(vln.df$Subject,3),
+                    Timepoint = rep(vln.df$Timepoint,3)
+                    )
+ds.df$Pathway <- factor(ds.df$Pathway,
+                        levels=c("PHAGOSOME_ACIDIFICATION","PHAGOLYSOSOME_ASSEMBLY","PHAGOSOME_LYSOSOME_FUSION"))
+
+titles <- c("PHAGOSOME_ACIDIFICATION" = "Phagosome acidification",
+           "PHAGOLYSOSOME_ASSEMBLY" = "Phagolysosome assembly",
+           "PHAGOSOME_LYSOSOME_FUSION" = "Phagosome-lysosome fusion",
+           "ETI-treated" = "ETI-treated",
+           "CF-untreated" = "CF-untreated")
+
+p <- {ggplot(ds.df, 
+       aes(x=Signature.score, fill=Timepoint)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values = c("#A1CAF1","#0067A5")) +
+  xlab(label = "Signature score") +
+  ylab("Density") +
+  scale_x_continuous(
+    labels = scales::label_number(accuracy = 0.1),
+    breaks = c(-0.1,0.2,0.5,0.8)) +
+  #ggtitle("IL-4 & IL-13 Signaling") +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        axis.text = element_text(size=8,),
+        strip.text.x = element_text(face="bold"),
+        strip.text.y = element_text(face="bold",
+                                    colour = "black"),
+        legend.title = element_text(size=10),
+        legend.key.size = unit(4,"mm"),
+        panel.spacing.x = unit(0.2, "lines"),
+        panel.spacing.y = unit(0, "lines"),
+        strip.background.x = element_rect(fill="#e3d5ca")) +
+  facet_grid(Condition~Pathway, labeller = as_labeller(titles))} %>%
+  modify_facet_appearance(strip.background.y.fill = c("#a4133c","#fff3b0"),
+                          strip.text.y.col = c("white","black"))
+as.ggplot(p)
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(p)
+ggsave(plot=last_plot(),
+       filename="densityplot.230920.jpeg",
+       device="jpeg",
+       height=3,
+       width=6,
+       dpi=1600)
+
+p1/p2/p3
+
+
+
+# modify_facet_appearance function =============================================
+modify_facet_appearance <- function(plot = NULL,
+                                    strip.background.x.fill = NULL, 
+                                    strip.background.y.fill = NULL,
+                                    strip.background.x.col = NULL,
+                                    strip.background.y.col = NULL,
+                                    strip.text.x.col = NULL,
+                                    strip.text.y.col = NULL){
+  
+  if(is.null(plot)){stop("A ggplot (gg class) needs to be provided!")}
+  
+  # Generate gtable object to modify the facet strips:
+  g <- ggplot_gtable(ggplot_build(plot))
+  
+  # Get the locations of the right and top facets in g:
+  stripy <- which(grepl('strip-r|strip-l', g$layout$name)) # account for when strip positions are switched r-l and/or t-b in facet_grid(switch = )
+  stripx <- which(grepl('strip-t|strip-b', g$layout$name))
+  
+  # Check that the provided value arrays have the same length as strips the plot has:
+  lx <- c(length(strip.background.x.fill), length(strip.background.x.col), length(strip.text.x.col))
+  if(!all(lx==length(stripx) | lx==0)){stop("The provided vectors with values need to have the same length and the number of facets in the plot!")}
+  ly <- c(length(strip.background.y.fill), length(strip.background.y.col), length(strip.text.y.col))
+  if(!all(ly==length(stripy) | ly==0)){stop("The provided vectors with values need to have the same length and the number of facets in the plot!")}
+  
+  # Change the strips on the y axis:
+  for (i in seq_along(stripy)){ # if no strips in the right, the loop will not be executed as seq_along(stripy) will be integer(0)
+    
+    # Change strip fill and (border) colour :
+    j1 <- which(grepl('strip.background.y', g$grobs[[stripy[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.background.y.fill[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j1]]$gp$fill <- strip.background.y.fill[i]} # fill
+    if(!is.null(strip.background.y.col[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j1]]$gp$col <- strip.background.y.col[i]} # border colour
+    
+    # Change color of text:
+    j2 <- which(grepl('strip.text.y', g$grobs[[stripy[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.text.y.col[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j2]]$children[[1]]$gp$col <- strip.text.y.col[i]}
+
+  }
+  
+  # Same but for the x axis:
+  for (i in seq_along(stripx)){
+    
+    # Change strip fill and (border) colour :
+    j1 <- which(grepl('strip.background.x', g$grobs[[stripx[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.background.x.fill[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j1]]$gp$fill <- strip.background.x.fill[i]} # fill
+    if(!is.null(strip.background.x.col[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j1]]$gp$col <- strip.background.x.col[i]} # border colour
+    
+    # Change color of text:
+    j2 <- which(grepl('strip.text.x', g$grobs[[stripx[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.text.x.col[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j2]]$children[[1]]$gp$col <- strip.text.x.col[i]}
+
+  }
+  
+  return(g) 
+  
+  # Note that it returns a gtable object. This can be ploted with plot() or grid::draw.grid(). 
+  # patchwork can handle the addition of such gtable to a layout with other ggplot objects, 
+  # but be sure to use patchwork::wrap_ggplot_grob(g) for proper alignment of plots!
+  # See: https://patchwork.data-imaginist.com/reference/wrap_ggplot_grob.html
+  
+}
+```
+
+Plot SPP1+ percentage
+```{r}
+cell <- subset(seu, Annotation == "recMo/MΦ")
+spp1.df <- data.frame(Barcode=rownames(cell@meta.data),
+                      SPP1 = cell@assays$RNA@data["SPP1",],
+                      Condition=cell$Condition,
+                      Subject=cell$Subject,
+                      Sample=cell$Sample,
+                      Timepoint=cell$Timepoint)
+
+spp1.df <- spp1.df %>% mutate(SPP1.positive = case_when(
+  SPP1 != 0 ~ "Y",
+  SPP1 == 0 ~ "N"
+))
+
+# SPP1+ in ETI-treated T1
+nrow(spp1.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1" & SPP1 > 0)) /
+nrow(spp1.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1"))
+
+# SPP1+ in ETI-treated T2
+nrow(spp1.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2" & SPP1 > 0)) /
+nrow(spp1.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2"))
+
+# SPP1+ in CF-untreated T1
+nrow(spp1.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1" & SPP1 > 0)) /
+nrow(spp1.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1"))
+
+# SPP1+ in CF-untreated T2
+nrow(spp1.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2" & SPP1 > 0)) /
+nrow(spp1.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2"))
+
+# SPP1+ in Healthy
+nrow(spp1.df %>% dplyr::filter(Condition == "Healthy" & SPP1 > 0)) /
+nrow(spp1.df %>% dplyr::filter(Condition == "Healthy"))
+
+spp1.condition.df <- data.frame(SPP1.pct = c(0.03867925,0.1919127,0.127572,0.1144353),
+                           Condition = c("ETI-treated", "ETI-treated", "CF-untreated", "CF-untreated"),
+                           Timepoint = c("T1","T2","T1","T2"))
+
+spp1.condition.df$Condition <- factor(spp1.condition.df$Condition,
+                                 levels=c("ETI-treated", "CF-untreated"))
+
+
+ggplot(spp1.condition.df, aes(x=Condition, y=SPP1.pct, fill=Timepoint)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y="Percentage of SPP1+ cells",
+       x=NULL)
+
+
+vec <- c()
+for (i in levels(spp1.df$Sample)) {
+  a <- nrow(spp1.df %>% dplyr::filter(Sample == i & SPP1 > 0)) / nrow(spp1.df %>% dplyr::filter(Sample == i))
+  vec <- c(vec, a)
+}
+```
+
+Plot MMP9+ percentage
+```{r}
+MMP9.df <- data.frame(Barcode=rownames(cell@meta.data),
+                      MMP9 = cell@assays$RNA@data["MMP9",],
+                      Condition=cell$Condition,
+                      Subject=cell$Subject,
+                      Sample=cell$Sample,
+                      Timepoint=cell$Timepoint)
+
+# MMP9+ in ETI-treated T1
+nrow(MMP9.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1" & MMP9 > 0)) /
+nrow(MMP9.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1"))
+
+# MMP9+ in ETI-treated T2
+nrow(MMP9.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2" & MMP9 > 0)) /
+nrow(MMP9.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2"))
+
+# MMP9+ in CF-untreated T1
+nrow(MMP9.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1" & MMP9 > 0)) /
+nrow(MMP9.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1"))
+
+# MMP9+ in CF-untreated T2
+nrow(MMP9.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2" & MMP9 > 0)) /
+nrow(MMP9.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2"))
+
+# MMP9+ in Healthy
+nrow(MMP9.df %>% dplyr::filter(Condition == "Healthy" & MMP9 > 0)) /
+nrow(MMP9.df %>% dplyr::filter(Condition == "Healthy"))
+
+
+MMP9.condition.df <- data.frame(MMP9.pct = c(0.01981132,0.1225931,0.05996473,0.09199701),
+                           Condition = c("ETI-treated", "ETI-treated", "CF-untreated", "CF-untreated"),
+                           Timepoint = c("T1","T2","T1","T2"))
+
+MMP9.condition.df$Condition <- factor(MMP9.condition.df$Condition,
+                                 levels=c("ETI-treated", "CF-untreated"))
+
+
+ggplot(MMP9.condition.df, aes(x=Condition, y=MMP9.pct, fill=Timepoint)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y="% cells in recMo/MΦ",
+       x=NULL,
+       title = "MMP9") +
+  theme(plot.title=element_text(hjust=0.5, face="bold", size=10))
+
+
+# combined
+cb.condition.df <- data.frame(pct = c(spp1.condition.df$SPP1.pct, MMP9.condition.df$MMP9.pct),
+                              Condition = rep(spp1.condition.df$Condition,2),
+                              Timepoint = rep(spp1.condition.df$Timepoint,2),
+                              gene = rep(c("SPP1","MMP9"),each=4))
+cb.condition.df$gene <- factor(cb.condition.df$gene, levels=c("SPP1","MMP9"))
+
+p <- {ggplot(cb.condition.df, aes(x=gene, y=pct, fill=Timepoint)) +
+    geom_bar(stat="identity",position="dodge") +
+    scale_fill_manual(values=c("#A1CAF1","#0067A5")) +
+  facet_grid(.~Condition) +
+    labs(y="% cells in recMo/MΦ",
+         x=NULL) +
+  theme_test() +
+  theme(plot.title = element_text(hjust=0.5, face="bold", size=12),
+        axis.text.x = element_text(size=10,face="bold.italic"),
+        strip.text.x = element_text(face="bold"),
+        legend.title = element_text(size=10),
+        legend.key.size = unit(4,"mm"),
+        panel.spacing.x = unit(0.2, "lines"),
+        panel.spacing.y = unit(0, "lines"),
+        strip.background.x = element_rect(fill="#e3d5ca"))} %>%
+  modify_facet_appearance(strip.background.x.fill = c("#a4133c","#fff3b0"),
+                          strip.text.x.col = c("white","black"))
+
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+as.ggplot(p)
+
+ggsave(plot=last_plot(),
+       filename="fibrosis.barplot.230720.jpeg",
+       device="jpeg",
+       height=3,
+       width=6,
+       dpi=1600)
+
+# CFTR =========================================================================
+CFTR.df <- data.frame(Barcode=rownames(seu@meta.data),
+                      CFTR = seu@assays$RNA@data["CFTR",],
+                      Condition=seu$Condition,
+                      Subject=seu$Subject,
+                      Sample=seu$Sample,
+                      Timepoint=seu$Timepoint)
+
+# CFTR+ in ETI-treated T1
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1"))
+
+# CFTR+ in ETI-treated T2
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2"))
+
+# CFTR+ in CF-untreated T1
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1"))
+
+# CFTR+ in CF-untreated T2
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2"))
+
+# CFTR+ in Healthy
+nrow(CFTR.df %>% dplyr::filter(Condition == "Healthy" & CFTR > 0)) /
+nrow(CFTR.df %>% dplyr::filter(Condition == "Healthy"))
+
+# IL10 =========================================================================
+IL10.df <- data.frame(Barcode=rownames(seu@meta.data),
+                      IL10 = seu@assays$RNA@data["IL10",],
+                      Condition=seu$Condition,
+                      Subject=seu$Subject,
+                      Sample=seu$Sample,
+                      Timepoint=seu$Timepoint)
+
+# IL10+ in ETI-treated T1
+nrow(IL10.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1" & IL10 > 0)) 
+nrow(IL10.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T1"))
+
+# IL10+ in ETI-treated T2
+nrow(IL10.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2" & IL10 > 0)) 
+nrow(IL10.df %>% dplyr::filter(Condition == "ETI-treated" & Timepoint == "T2"))
+
+# IL10+ in CF-untreated T1
+nrow(IL10.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1" & IL10 > 0)) 
+nrow(IL10.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T1"))
+
+# IL10+ in CF-untreated T2
+nrow(IL10.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2" & IL10 > 0)) 
+nrow(IL10.df %>% dplyr::filter(Condition == "CF-untreated" & Timepoint == "T2"))
+
+# IL10+ in Healthy
+nrow(IL10.df %>% dplyr::filter(Condition == "Healthy" & IL10 > 0)) 
+nrow(IL10.df %>% dplyr::filter(Condition == "Healthy"))
+
+
+# obsolete =====================================================================
+ggplot(spp1.condition.df, aes(x=Condition, y=SPP1.pct, fill=Timepoint)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y="% cells in recMo/MΦ",
+       x=NULL,
+       title = "SPP1") + 
+  theme(plot.title=element_text(hjust=0.5, face="bold.italic", size=10)) + NoLegend() +
+  ggplot(MMP9.condition.df, aes(x=Condition, y=MMP9.pct, fill=Timepoint)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_classic() +
+  scale_fill_manual(values = c("#A1CAF1", "#0067A5")) +
+  labs(y=NULL,
+       x=NULL,
+       title = "MMP9") +
+  scale_y_continuous(breaks=c(0.00, 0.03, 0.06,0.09,0.12)) +
+  theme(plot.title=element_text(hjust=0.5, face="bold.italic", size=10))
+
+
+
+
+
+for (i in levels(mmp9.df$Sample)) {
+  a <- nrow(mmp9.df %>% dplyr::filter(Sample == i & MMP9 > 0)) / nrow(spp1.df %>% dplyr::filter(Sample == i))
+  message(a)
+}
+
+
+
+
+spp1.df %>%
+  group_by( Condition, Timepoint ) %>%
+  summarise( percent = 100 * n() / nrow(spp1.df))
+
+ggplot(spp1.df, aes(x=))
+
+
+
+
+
+```
+
+obsolete
+```{r}
+genes <- unique(c5_sets[grep(go[1],gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+
+go.0004958 <- c("MASP2","CLU","CR1","CR1L","CR2","CD55","CFI","MBL2","CD46","C1RL","TREM2",
+                "SUSD4","C1QBP","SERPING1","C1QA","C1QB","C1QC","C1R","C1S","C2","C3","C4A",
+                "C4B","C4BPA","C4BPB","C5","C6","C7","C8A","C8B","C8G","C9","SVEP1")
+sets <- lappend(sets, go.0004958)
+
+genes <- unique(c5_sets[grep(go[3],gs_exact_source)]$gene_symbol)
+
+unique(c5_sets[grep("GO:0006910",gs_exact_source)]$gene_symbol)
+
+z["GO:0006910"]
+
+sets <- lappend(sets, genes)
+
+#
+go.0006911 <- c("ABCA7","RAB31","CD300A","XKR4","CLCN3","DOCK1","ABCA1","ANO6","AIF1","F2RL1","FCGR1A","FCGR2B","SH3BP1","ALOX15","STAP1","GATA2","HAVCR1","XKR6","GSN","NCKAP1L","XKR7","ITGA2","ITGAM","ITGB2","XKR5","XKR9","MSR1","MYH9","BIN2","GULP1","PLCG2","TREM2","XKR8","APPL2","ADGRB1","RAC1","RAC3","VAMP7","THBS1","C3","MEGF10","BECN1","MARCO","TIMD4","ARHGAP12","CD36","ELMO1","ARHGAP25","CDC42")
+sets <- lappend(sets, go.0006911)
+names(sets) <- names(go)
+
+# PHAGOSOME_MATURATION
+genes <- unique(c5_sets[grep("GO:0090382",gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+names(sets)[5] <- "PHAGOSOME_MATURATION"
+
+# Phagocytosis
+genes <- unique(c5_sets[grep("GO:0006909",gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+names(sets)[7] <- "PHAGOCYTOSIS"
+
+# MACROPHAGE_MIGRATION
+genes <- unique(c5_sets[grep("GO:1905517",gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+names(sets)[8] <- "MACROPHAGE_MIGRATION"
+
+
+# # Interleukin-4
+# genes <- unique(c5_sets[grep("GO:0032633",gs_exact_source)]$gene_symbol)
+# genes
+# sets <- lappend(sets, genes)
+# names(sets)[1] <- "INTERLEUKIN_4_PRODUCTION"
+# 
+# # INTERLEUKIN_6_MEDIATED_SIGNALING_PATHWAY
+# genes <- unique(c5_sets[grep("GO:0070102",gs_exact_source)]$gene_symbol)
+# sets <- lappend(sets, genes)
+# names(sets)[2] <- "INTERLEUKIN_6_MEDIATED_SIGNALING_PATHWAY"
+# 
+# # INTERLEUKIN_13_PRODUCTION
+# genes <- unique(c5_sets[grep("GO:0032616",gs_exact_source)]$gene_symbol)
+# sets <- lappend(sets, genes)
+# names(sets)[3] <- "INTERLEUKIN_13_PRODUCTION"
+
+# INTERLEUKIN_8_PRODUCTION
+genes <- unique(c5_sets[grep("GO:0032637",gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+names(sets)[1] <- "INTERLEUKIN_8_PRODUCTION"
+
+# IL4-IL13_PRODUCTION
+genes <- unique(c(c5_sets[grep("GO:0032616",gs_exact_source)]$gene_symbol,
+                  c5_sets[grep("GO:0032633",gs_exact_source)]$gene_symbol))
+sets <- lappend(sets, genes)
+names(sets)[2] <- "IL4_IL13_PRODUCTION"
+
+# I_KAPPAB_KINASE_NF_KAPPAB_SIGNALING
+genes <- unique(c5_sets[grep("GO:0007249",gs_exact_source)]$gene_symbol)
+sets <- lappend(sets, genes)
+names(sets)[3] <- "I_KAPPAB_KINASE_NF_KAPPAB_SIGNALING"
+
+sets
+```
+
+Violin plot
+```{r}
+VlnPlot(cell,
+        features=c("NFKBIA","NFKB1","RIPK2","IRAK2","ITGB2","CD36","UBE2D3","TRAF3","TAB2","TBK1","CD180","BIRC3","UBC","FOS","APP","TANK","TLR2","UBE2D1","FBXW11","CUL1"),
+        cols = c("red","red","green","green","grey"),
+        split.by = "condition1",
+        pt.size = 0.0000001,
+        #group.by = "condition1",
+        sort=FALSE,
+        assay = "RNA",
+        slot = "data",
+        #y.max=100,
+        log=TRUE)
+
+
+
+
+
+```
+
+Statistical test
+```{r}
+# example
+y <- subset(cell.vln, condition3 == "ETI-treated_t1")
+y <- y$PHAGOSOME_ACIDIFICATION
+
+x <- subset(cell.vln, condition3 == "ETI-treated_t2")
+x <- x$PHAGOSOME_ACIDIFICATION
+
+term <- "REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY"
+
+# old ==========================================================================
+# untreated
+x <- (cell.s@meta.data %>% dplyr::filter(condition1=="CF_untreated_t2"))$REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY
+y <- (cell.s@meta.data %>% dplyr::filter(condition1=="CF_untreated_t1"))$REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY
+wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+
+# treated
+x <- (cell.s@meta.data %>% dplyr::filter(condition1=="CF_treated_t2"))$REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY
+y <- (cell.s@meta.data %>% dplyr::filter(condition1=="CF_treated_t1"))$REGULATION_OF_TOLL_LIKE_RECEPTOR_4_SIGNALING_PATHWAY
+wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+
+head(cell.s@meta.data)
+
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+
+result$p.value
+
+# 230920 phagocytosis ==========================================================
+# ETI-treated
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOSOME_ACIDIFICATION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_ACIDIFICATION
+wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOLYSOSOME_ASSEMBLY
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOLYSOSOME_ASSEMBLY
+wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOSOME_LYSOSOME_FUSION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_LYSOSOME_FUSION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+# CF-untreated
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t2"))$PHAGOSOME_ACIDIFICATION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOSOME_ACIDIFICATION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t2"))$PHAGOLYSOSOME_ASSEMBLY
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOLYSOSOME_ASSEMBLY
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t2"))$PHAGOSOME_LYSOSOME_FUSION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOSOME_LYSOSOME_FUSION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+# ETI-treated T1 vs CF-untreated T1
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_ACIDIFICATION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOSOME_ACIDIFICATION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOLYSOSOME_ASSEMBLY
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOLYSOSOME_ASSEMBLY
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_LYSOSOME_FUSION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="CF-untreated_t1"))$PHAGOSOME_LYSOSOME_FUSION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+
+
+# ETI-treated T2 vs Healthy
+cell.vln <- subset(seu, Annotation == "recMo/MΦ")
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_ACIDIFICATION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOSOME_ACIDIFICATION
+result <- wilcox.test(x, y, paired=FALSE, alternative="less", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOLYSOSOME_ASSEMBLY
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOLYSOSOME_ASSEMBLY
+result <- wilcox.test(x, y, paired=FALSE, alternative="less", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t1"))$PHAGOSOME_LYSOSOME_FUSION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOSOME_LYSOSOME_FUSION
+result <- wilcox.test(x, y, paired=FALSE, alternative="less", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOSOME_ACIDIFICATION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOSOME_ACIDIFICATION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOLYSOSOME_ASSEMBLY
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOLYSOSOME_ASSEMBLY
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+x <- (cell.vln@meta.data %>% dplyr::filter(condition3=="ETI-treated_t2"))$PHAGOSOME_LYSOSOME_FUSION
+y <- (cell.vln@meta.data %>% dplyr::filter(condition3=="Healthy"))$PHAGOSOME_LYSOSOME_FUSION
+result <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+result$p.value
+
+
+
+
+
+
+
+
+
+
+
+wilcox.list <- list()
+compare.sets <- list(c("CF_treated_t1", "CF_treated_t2"),
+                     c("CF_untreated_t1", "CF_untreated_t2"),
+                     c("CF_treated_t2", "CF_untreated_t2"))
+
+for (j in seq(length(compare.sets))){
+  compare <- c(compare.sets[[j]])
+  message(glue("Start Wilcoxon rank sum test for: ", compare[1], "_vs_", compare[2], " ..."))
+  
+  cell.s <- subset(cell, condition1 %in% compare)
+  cell.s$condition1 <- fct_drop(cell.s$condition1)
+  cell.s$timepoint <- fct_drop(cell.s$timepoint)
+  
+  wilcox.vec <- c()
+  for (i in seq(length(features))) {
+    x <- subset(cell.s, condition1 == compare[1])@meta.data[,features[i]]
+    y <- subset(cell.s, condition1 == compare[2])@meta.data[,features[i]]
+    w <- wilcox.test(x, y, paired=FALSE, alternative="greater", p.adjust.methods = "fdr")
+    pval <- w$p.value
+    wilcox.vec <- append(wilcox.vec, pval)
+  }
+  
+  names(wilcox.vec) <- features
+  wilcox.list[[glue(compare[1],"_vs_",compare[2])]] <- wilcox.vec
+}
+
+wilcox.list
+
+d <- data.frame(values = unlist(wilcox.list))
+d$pathway <- gsub(".*\\.","", rownames(d))
+d$condition1 <- gsub("\\..*","", rownames(d))
+row.names(d) <- NULL
+d
+
+ggplot(d, aes(x=pathway, y=-log(values,base=2), fill=condition1)) +
+  geom_bar(position="dodge", stat="identity") +
+  geom_hline(yintercept=-log(0.001,base=2),color ="navy",linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="bottom",
+        legend.justification = "centre",
+        legend.direction = "vertical",
+        legend.text=element_text(size=8),
+        legend.title = element_text(size=10),
+        axis.title = element_text(size=10),
+        axis.text.y = element_text(colour="black", size=8)) +
+  ylab(expression(-log[2](p.value))) +
+  scale_y_continuous(expand = c(0.1,0)) +
+  coord_flip() +
+  scale_fill_npg()
+
+ggsave(plot=last_plot(), device="jpeg",
+       height=6,width=10,
+       filename = "RM.inflam.moduleScore.pvalue.barplot.230619.jpeg")
+
+
+mean(x)
+mean(y)
+w <- wilcox.test(x, y, paired=FALSE, alternative="two.sided", p.adjust.methods = "fdr")
+
+w <- c()
+
+w <- append(w, 0.1)
+w
+data.frame(w)
+
+```
+
+Visualize
+```{r}
+grp <- "integrated_snn_res.0.5"
+DimPlot(seu, reduction = 'umap', label = FALSE,
+          repel = TRUE, cols = colours,
+          label.size = 4, label.box = FALSE,
+          split.by = "condition1",
+          group.by = grp) #+ NoLegend()
+
+FeaturePlot(seu,
+            features="SPP1",
+            pt.size = 0.00000001,
+            label.size = 2,
+            #cols=c("grey","red"), 
+            split.by = "condition1",
+            min.cutoff ="q10", max.cutoff="q90", order=TRUE)
+
+FeaturePlot(seu,
+            features="SPP1",
+            pt.size = 0.00000001,
+            label.size = 2,
+            #cols=c("grey","red"), 
+            split.by = "condition1",
+            min.cutoff ="q10", max.cutoff="q90", order=TRUE)
+```
+
+VlnPlots
+```{r}
+Idents(seu)
+VlnPlot(subset(seu, integrated_snn_res.0.5 == "6"),
+        features=c("SPP1","RBMS3","PRRX2","FBN1", "COL4A1", "ITGB1"),
+        #cols = c("grey","red"),
+        split.by = "condition1",
+        pt.size = 0.0000001,
+        #group.by = "condition1",
+        sort=FALSE,
+        assay = "RNA",
+        slot = "data",
+        #y.max=100,
+        log=TRUE)
+
+VlnPlot(mom,
+        features=c("FABP5", "GPNMB", "CD9", "CD81", "APOC1",
+                   "LGMN", "APOE", "MSR1", "MRC1", "TREM2"),
+        #cols = c("grey","red"),
+        split.by = "condition1",
+        pt.size = 0.0000001,
+        #group.by = "condition1",
+        sort=FALSE,
+        assay = "RNA",
+        slot = "data",
+        #y.max=40,
+        log=FALSE)
+
+VlnPlot(mom,
+        features=c("C1QA", "C1QB", "C1QC", "CD59", "CR1",
+                   "SERPING1", "CFD"),
+        #cols = c("grey","red"),
+        #split.by = "integrated_snn_res.0.7",
+        pt.size = 0.0000001,
+        group.by = "condition1",
+        sort=FALSE,
+        #assay = "RNA",
+        #slot = "data",
+        #y.max=40,
+        log=FALSE)
+
+
+```

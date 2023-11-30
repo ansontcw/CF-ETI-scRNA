@@ -1,0 +1,362 @@
+---
+title: "clustering"
+author: "Anson Wong"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.path = "output/")
+```
+
+Load packages
+```{r}
+suppressPackageStartupMessages(library(SingleCellExperiment))
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(SeuratData))
+suppressPackageStartupMessages(library(patchwork))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(scCustomize))
+suppressPackageStartupMessages(library(clustree))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(Polychrome))
+suppressPackageStartupMessages(library(pals))
+suppressPackageStartupMessages(library(BiocStyle))
+suppressPackageStartupMessages(library(glue))
+suppressPackageStartupMessages(library(scran))
+suppressPackageStartupMessages(library(scater))
+suppressPackageStartupMessages(library(scuttle))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(limma))
+suppressPackageStartupMessages(library(EnsDb.Hsapiens.v86))
+suppressPackageStartupMessages(library(ensembldb))
+suppressPackageStartupMessages(library(Homo.sapiens))
+suppressPackageStartupMessages(library(msigdbr))
+suppressPackageStartupMessages(library(EGSEA))
+suppressPackageStartupMessages(library(speckle))
+suppressPackageStartupMessages(library(here))
+```
+
+Read objects
+```{r}
+# Read object
+sce <- readRDS((here("data_230503","SCEs","G000323.preprocessed.SCE.rds")))
+```
+
+Identify uninformative genes
+```{r}
+# Some useful gene sets
+mito_set <- rownames(sce)[which(rowData(sce)$CHR == "MT")]
+ribo_set <- grep("^RP(S|L)", rownames(sce), value = TRUE)
+# NOTE: A more curated approach for identifying ribosomal protein genes
+#       (https://github.com/Bioconductor/OrchestratingSingleCellAnalysis-base/blob/ae201bf26e3e4fa82d9165d8abf4f4dc4b8e5a68/feature-selection.Rmd#L376-L380)
+c2_sets <- msigdbr(species = "Homo sapiens", category = "C2")
+ribo_set <- union(
+  ribo_set,
+  c2_sets[c2_sets$gs_name == "KEGG_RIBOSOME", ]$human_gene_symbol)
+sex_set <- rownames(sce)[any(rowData(sce)$ENSEMBL.SEQNAME %in% c("X", "Y"))]
+pseudogene_set <- rownames(sce)[
+  any(grepl("pseudogene", rowData(sce)$ENSEMBL.GENEBIOTYPE))]
+
+```
+
+Calculate quality control metrics
+```{r}
+is_mito <- rownames(sce) %in% mito_set
+is_ribo <- rownames(sce) %in% ribo_set
+head(colData(sce)) %>% knitr::kable()
+
+```
+
+Discard uninformative genes
+```{r}
+uninformative <- is_mito | is_ribo | rownames(sce) %in% sex_set | rownames(sce) %in% pseudogene_set
+# # original:
+# junk <- sce$HTO_demuxmix %in% c("multiplet", "negative") | (sce$cell_status == "empty_droplet")
+# sceFlt <- sce[!uninformative, !junk] 
+junk <- sce$HTO_HTODemux %in% c("Doublet", "Negative")
+sceFlt <- sce[!uninformative, !junk]
+
+```
+
+Remove low-abundance genes
+```{r}
+numCells <- nexprs(sceFlt, byrow = TRUE)
+keep <- numCells > 20
+#sum(keep)
+sceFlt <- sceFlt[keep,]
+```
+
+Convert to Seurat object
+```{r}
+counts <- counts(sceFlt)
+rownames(counts) <- rowData(sceFlt)$Symbol
+seu <- CreateSeuratObject(counts = counts, meta.data = data.frame(colData(sceFlt)))
+dim(seu)
+```
+
+Normalize
+```{r}
+DefaultAssay(seu) <- "RNA"
+seu <- SCTransform(seu,
+                   vst.flavor="v2",
+                   variable.features.n = 3000,
+                   vars.to.regress = c("subsets_Mito_percent", "subsets_Ribo_percent"))
+
+DimPlot(seu, reduction = "umap", group.by = "orig.ident",
+        label = FALSE)
+```
+
+Linear dimensional reduction
+```{r}
+p1 <- DimPlot(seu, reduction = "pca", group.by = "orig.ident")
+p2 <- DimPlot(seu, reduction = "pca", dims = c(1,3), group.by = "orig.ident")
+p3 <- DimPlot(seu, reduction = "pca", dims = c(2,3), group.by = "orig.ident")
+p4 <- DimPlot(seu, reduction = "pca", dims = c(3,4), group.by = "orig.ident")
+
+((p1 | p2) / (p3 | p4)) + plot_layout(guides = "collect") &
+  theme(legend.text = element_text(size = 8),
+        plot.title = element_text(size = 10),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 8))
+
+DimHeatmap(seu, dims = 1:20, cells = 500, balanced = TRUE)
+
+ElbowPlot(seu, ndims = 30)
+```
+
+Cluster the cells
+```{r}
+out <- here("data/SCEs/G000323.clustered.SEU.rds")
+seu <- FindNeighbors(seu, reduction = "pca", dims = 1:30)
+plan("multicore",workers=20)
+options(future.seed=TRUE)
+seu <- FindClusters(seu, algorithm = 4,  method = "igraph", 
+                    resolution = seq(0.1, 2, by = 0.1))
+ggsave(plot=clustree(seu, prefix="SCT_snn_res."), device="pdf",
+       width = 10,
+       height = 18,
+       file="all.clustree.alg4.230425.pdf")
+
+```
+
+Non-linear dimensional reduction
+```{r}
+seu <- RunUMAP(seu, dims = 1:30)
+
+# Visualize UMAP
+colours <- c(brewer.paired(12), brewer.dark2(8), brewer.set2(8), rev(brewer.accent(8)))
+p1 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "SCT_snn_res.0.9", label = TRUE,
+              label.size = 2.5, repel = TRUE) +
+  NoLegend() +
+  ggtitle("SCT_snn_res.0.9")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+p2 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "SCT_snn_res.1", label = TRUE,
+              label.box = TRUE,
+              label.size = 2.5, repel = TRUE) +
+  NoLegend() +
+  ggtitle("SCT_snn_res.1")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+ggsave(plot=p1 + p2, device="pdf", height=6, width=12,
+       file="all.umap.alg4.res0.9_1.230425.pdf")
+
+if(!file.exists(out)) {
+  saveRDS(seu, file = out)
+}
+
+```
+
+Annotate data using Zilionis's reference
+```{r}
+zilSct <- readRDS("/group/canc2/anson/reference/annotation/GSE127465_RAW/ZILIONIS.sct_normalised.SEU.rds")
+options(future.globals.maxSize = 5000000000, future.seed=TRUE)
+anchors <- FindTransferAnchors(reference = zilSct, query = seu,
+                               dims = 1:30, reference.reduction = "pca",
+                               normalization.method = "SCT")
+seu <- MapQuery(anchorset = anchors, reference = zilSct,
+                query = seu,
+                refdata = list(celltype = "Major.cell.type"),
+                reference.reduction = "pca",
+                reduction.model = "umap")
+out <- here('data/SCEs/G000323.clustered.Zilionis.SEU.rds')
+if(!file.exists(out)) {
+  saveRDS(seu, out)
+}
+
+# Visualize
+p1 <- DimPlot(seu, reduction = 'umap',
+        label = TRUE, repel = TRUE,
+        label.size = 2.5,
+        group.by = "predicted.celltype") + NoLegend()
+ggsave(plot=p1, device="pdf", height=6, width=12,
+       file="all.umap.alg4.Zilionis.230425.pdf")
+
+```
+
+Annotate data using HLCA v2 [requires R v4.2.2]
+```{r}
+# load libraries
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(Azimuth))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(forcats))
+
+# read object
+seu <- readRDS(here('data','SCEs','G000323.clustered.Zilionis.SEU.rds'))
+# Slim down object
+DefaultAssay(seu) <- "RNA"
+seu.diet <- DietSeurat(seu, assays = "RNA")
+# run Azimuth
+seu.diet <- RunAzimuth(seu.diet, 
+                       "/group/canc2/anson/reference/annotation/HLCA_v2", 
+                       umap.name = 'azimuth.umap',
+                       verbose = TRUE, 
+                       assay = "RNA", 
+                       k.weight = 50, 
+                       n.trees = 20, 
+                       mapping.score.k = 100)
+# rds format from the web Azimuth app:
+# list(umap=umap, predicted.df=df)
+umap <- seu.diet@reductions$azimuth.umap
+df <- data.frame(row.names=rownames(seu.diet@meta.data),
+                 cell = rownames(seu.diet@meta.data), 
+                 predicted.ann_level_1=seu.diet$predicted.ann_level_1,
+                 predicted.ann_level_2=seu.diet$predicted.ann_level_2,
+                 predicted.ann_level_3=seu.diet$predicted.ann_level_3,
+                 predicted.ann_level_4=seu.diet$predicted.ann_level_4,
+                 predicted.ann_level_5=seu.diet$predicted.ann_level_5,
+                 predicted.ann_finest_level=seu.diet$predicted.ann_finest_level,
+                 predicted.ann_level_1.score=seu.diet$predicted.ann_level_1.score,
+                 predicted.ann_level_2.score=seu.diet$predicted.ann_level_2.score,
+                 predicted.ann_level_3.score=seu.diet$predicted.ann_level_3.score,
+                 predicted.ann_level_4.score=seu.diet$predicted.ann_level_4.score,
+                 predicted.ann_finest_level.score=seu.diet$predicted.ann_finest_level.score,
+                 mapping.score=seu.diet$mapping.score)
+
+# generate the azimuth result (which is a list)
+azimuth.result <- list(umap = umap, pred.df = df)
+
+# save the list
+saveRDS(azimuth.result, file = here('data','SCEs','azimuth.result.rds'))
+
+# add annotation
+seu <- AddAzimuthResults(seu, filename=here('data','SCEs','azimuth.result.rds'))
+seu$predicted.ann_level_1 <- fct_drop(seu$predicted.ann_level_1)
+seu$predicted.ann_level_2 <- fct_drop(seu$predicted.ann_level_2)
+seu$predicted.ann_level_3 <- fct_drop(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- fct_drop(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- fct_drop(seu$predicted.ann_finest_level)
+
+out <- here('data','SCEs','G000323.clustered.Zilionis.HLCA.SEU.rds')
+
+# save object
+if(!file.exists(out)) {
+  saveRDS(seu, out)
+}
+
+```
+
+Split and save object
+```{r}
+seu <- readRDS(here('data','SCEs','G000323.clustered.Zilionis.HLCA.SEU.rds'))
+labels <- levels(factor(seu$predicted.ann_level_3))
+macrophages <- c("Macrophages")
+tcells <- c("T cell lineage", "Innate lymphoid cell NK")
+#myeloid <- c("Dendritic cells", "Mast cells", "Monocytes", "Macrophages")
+#epithelial <- c("Basal", "Multiciliated lineage", "Rare", "Secretory")
+
+# lung <- c("AT1", "Rare", "Secretory", "Basal", "EC capillary", #old
+#           "EC venous", "Multiciliated lineage")
+
+subList <- list(macrophages = macrophages,
+                tcells = tcells, 
+                others = labels[!labels %in% c(macrophages, tcells)]
+                )
+
+Idents(seu) <- "predicted.ann_level_3"
+
+for(sub in names(subList)){
+  out <- here(glue("data/SCEs/G000323.clustered.Zilionis.HLCA.{sub}.SEU.rds"))
+  message(sub)
+  a <- subset(seu, idents = subList[[sub]])
+  DefaultAssay(a) <- "RNA"
+  if(!file.exists(out)){
+    saveRDS(DietSeurat(a, assays = "RNA", dimreducs = NULL, graphs = NULL), out)
+  }
+}
+
+```
+
+Visualize UMAP
+```{r}
+colours <- c(brewer.paired(12), brewer.dark2(8), brewer.set2(8), rev(brewer.accent(8)))
+# Visualize annotation
+p1 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "predicted.ann_level_3", label = FALSE,
+              label.size = 2.5, repel = TRUE, label.box = FALSE) +
+  #NoLegend() +
+  ggtitle("predicted.ann_level_3")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+p2 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "predicted.ann_level_4", label = FALSE,
+              label.size = 2.5, repel = TRUE, label.box = FALSE) +
+  #NoLegend() +
+  ggtitle("predicted.ann_level_4")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+p3 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "predicted.ann_finest_level", label = FALSE,
+              label.size = 2.5, repel = TRUE, label.box = FALSE) +
+  #NoLegend() +
+  ggtitle("predicted.ann_finest_level")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+
+p4 <- DimPlot(seu, reduction = "umap",
+              cols = colours,
+              group.by = "SCT_snn_res.0.9", label = TRUE,
+              label.size = 2.5, repel = TRUE, label.box = TRUE) +
+  NoLegend() +
+  ggtitle("SCT_snn_res.0.9")  +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        title = element_text(size = 9))
+p2/p3 + p4
+#+ NoLegend()
+ggsave(plot=p2/p3 + p4, file="mac.umap.jpeg", device="jpeg", dpi=300, height=12, width=6)
+
+
+factor(seu$predicted.celltype)
+
+table(seu$predicted.celltype) %>% knitr::kable()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

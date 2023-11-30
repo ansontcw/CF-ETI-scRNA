@@ -1,0 +1,521 @@
+---
+title: "scRNA-seq QC"
+author: "Anson Wong"
+date: '2023-10-25'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set path
+```{r}
+setwd('/group/canc2/anson/working/CF-ETI-scRNA')
+```
+
+# Load packages
+```{r}
+suppressMessages(library(Seurat))
+suppressMessages(library(SeuratData))
+suppressMessages(library(patchwork))
+suppressMessages(library(DropletUtils))
+suppressMessages(library(ggplot2))
+suppressMessages(library(tidyverse))
+suppressMessages(library(gridExtra))
+suppressMessages(library(scCustomize))
+suppressMessages(library(RColorBrewer))
+suppressMessages(library(Polychrome))
+suppressMessages(library(pals))
+suppressPackageStartupMessages(library(BiocStyle))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(glue))
+suppressPackageStartupMessages(library(scran))
+suppressPackageStartupMessages(library(scater))
+suppressPackageStartupMessages(library(scuttle))
+suppressPackageStartupMessages(library(scds))
+suppressPackageStartupMessages(library(scDblFinder))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(scuttle))
+suppressPackageStartupMessages(library(janitor))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(DropletQC))
+
+```
+
+# batch 1
+Load 10x counts [done on 231025]
+```{r }
+# define sample name and data path
+capture_names <- paste0("capture1-", 1:4)
+capture_names <- setNames(capture_names, capture_names)
+captures <- setNames(
+  here(
+    "CellRanger",
+    capture_names,
+    "outs",
+    "multi",
+    "count",
+    "raw_feature_bc_matrix"),
+  capture_names)
+
+# make SingleCellExpreiment object
+sce <- read10xCounts(samples=captures, col.names=TRUE)
+stopifnot(!anyDuplicated(colnames(sce))) # check if there are duplicated cell barcode
+sce <- splitAltExps(sce, rowData(sce)$Type, "Gene Expression") # result: mainExpName: Gene Expression
+                                                               # altExpNames(1): Antibody Capture
+
+# Save a copy of the SCE
+dir.create(here("data", "SCEs"))
+out <- here("data", "SCEs", "expt1.CellRanger.SCE.rds")
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Identify empty droplets [done on 231025]
+emptyDrops() from DropletUtils was used to call and remove empty droplets separately for each capture.
+Cells are called at a false discovery rate (FDR) of 0.1% 
+```{r echo=FALSE}
+# Identify empty droplets
+set.seed(100)
+list_of_empties <- lapply(capture_names, function(cn) {
+  message(cn)
+  emptyDrops(counts(sce)[, sce$Sample == cn])
+})
+
+# Check if more permutations are needed; see
+# https://osca.bioconductor.org/quality-control.html#testing-for-empty-droplets
+more_permutations_needed <- sapply(list_of_empties, function(e) {
+  table(
+    Sig = e$FDR <= 0.001,
+    Limited = e$Limited)[1, 2] > 0
+})
+stopifnot(all(!more_permutations_needed))
+
+# save emptyDrops output
+dir.create(here("data", "emptyDrops"))
+for (cn in capture_names) {
+  message(cn)
+  empties <- list_of_empties[[cn]]
+  saveRDS(
+    object = empties,
+    file = here("data", "emptyDrops", paste0(cn, ".emptyDrops.rds")))
+
+  writeLines(
+    text = sce[["Barcode"]][sce$Sample == cn][which(empties$FDR <= 0.001)],
+    con = here(
+      "data",
+      "emptyDrops",
+      paste0(cn, ".barcodes.txt")))
+}
+
+# Preparing HTO data
+is_hto <- rownames(altExp(sce, "Antibody Capture")) %in%
+  paste0("Human_HTO_", c(3,6,7,8,10,12,13,14,15,16))
+
+altExp(sce, "HTO") <- altExp(sce, "Antibody Capture")[is_hto, ]
+altExp(sce, "Antibody Capture") <- NULL
+
+expSum <- colSums(counts(sce))
+htoSum <- colSums(counts(altExp(sce, "HTO")))
+
+dat <- data.frame(exp = expSum, hto = htoSum)
+
+sce$capture <- factor(sce$Sample)
+capture_names <- levels(sce$capture)
+capture_names <- setNames(capture_names, capture_names)
+
+empties <- do.call(rbind, lapply(capture_names, function(cn) {
+  message(cn)
+  empties <- readRDS(
+    here("data", "emptyDrops", paste0(cn, ".emptyDrops.rds")))
+  empties$capture <- cn
+  empties
+}))
+
+tapply(
+  empties$FDR,
+  empties$capture,
+  function(x) sum(x <= 0.001, na.rm = TRUE)) %>%
+  knitr::kable(
+    caption = "Number of non-empty droplets identified using `emptyDrops()` from **DropletUtils**.")
+
+# Remove empty droplets
+sce <- sce[, which(empties$FDR <= 0.001)] # which(empties$FDR <= 0.001) returns column index (i.e. non-empty droplets)
+
+# save file
+out <- here("data", "SCEs", "expt1.emptyDrops.SCE.rds")
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Demultiplex [done on 231025]
+Demultiplexing HTO using HTODemux() in Seurat
+```{r}
+# load data
+sce <- readRDS(here("data","SCEs","expt1.emptyDrops.SCE.rds"))
+# sce <- readRDS(here("data","SCEs","expt1.demultiplexed.SCE.rds"))
+
+# load in umi and hto matrix
+umis <- counts(sce)
+htos <- counts(altExp(sce))
+
+# # alternatively, load from directory
+# umis <- readRDS(here('data_230503/SCEs/G000323.umi.rds'))
+# htos <- readRDS(here('data_230503/SCEs/G000323.hto.rds'))
+
+# Select cell barcodes detected by both RNA and HTO
+joint.bcs <- intersect(colnames(umis), colnames(htos))
+
+# Subset RNA and HTO counts by joint cell barcodes
+umis <- umis[, joint.bcs]
+htos <- as.matrix(htos[, joint.bcs])
+
+# Confirm that the HTO have the correct names
+rownames(htos)
+
+# Setup Seurat object
+hashtag <- CreateSeuratObject(counts = umis)
+
+# Normalize RNA data with log normalization
+hashtag <- NormalizeData(hashtag)
+
+# Find and scale variable features
+hashtag <- FindVariableFeatures(hashtag, selection.method = "mean.var.plot")
+hashtag <- ScaleData(hashtag, features = VariableFeatures(hashtag))
+
+# Add HTO data as a new assay independent from RNA
+hashtag[["HTO"]] <- CreateAssayObject(counts = htos)
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+hashtag <- NormalizeData(hashtag, assay = "HTO", normalization.method = "CLR")
+
+# Demultiplex cells based on HTO enrichment
+hashtag <- HTODemux(hashtag, assay = "HTO", positive.quantile = 0.99)
+
+# Global classification results
+table(hashtag$HTO_classification.global)
+
+# add demultiplexing information to SCE
+sce$HTO_HTODemux <- factor(gsub("-","_",hashtag$hash.ID), 
+                           levels = c(paste0("Human_HTO_", 
+                                             c(3,6,7,8,10,12,13,14,15,16)),
+                                      "Doublet", "Negative"))
+sce$HTODemux_result <- hashtag@meta.data
+
+# add colour
+sce$colours <- S4Vectors::make_zero_col_DFrame(ncol(sce))
+
+hto_colours <- setNames(
+  c(palette.colors(nlevels(sce$HTO_HTODemux), "Paired"),"grey","black"),
+  levels(sce$HTO_HTODemux))
+sce$colours$hto_colours <- hto_colours[sce$HTO_HTODemux]
+
+capture_colours <- setNames(
+  palette.colors(nlevels(sce$capture), "Accent"),
+  levels(sce$capture))
+sce$colours$capture_colours <- capture_colours[sce$capture]
+
+out <- here("data",
+            "SCEs", 
+            "expt1.demultiplexed.SCE.rds")
+
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Visualize demultiplexing results
+```{r}
+# Group cells based on the max HTO signal
+Idents(hashtag) <- "HTO_maxID"
+RidgePlot(hashtag, assay = "HTO", features = rownames(hashtag[["HTO"]])[1:10], ncol = 4)
+
+Idents(hashtag) <- "HTO_classification.global"
+VlnPlot(hashtag, features = "nCount_RNA", pt.size = 0.1, log = TRUE, raster=FALSE)
+
+## Generate a 2D tSNE embeddings for HTOs.
+# First, we will remove negative cells from the object
+hashtag.subset <- subset(hashtag, idents = "Negative", invert = TRUE)
+
+# # Calculate a tSNE embedding of the HTO data
+# DefaultAssay(hashtag.subset) <- "HTO"
+# hashtag.subset <- ScaleData(hashtag.subset, features = rownames(hashtag.subset))
+# hashtag.subset <- RunPCA(hashtag.subset, features = rownames(hashtag.subset), approx = FALSE)
+# hashtag.subset <- RunTSNE(hashtag.subset, dims = 1:8, perplexity = 100)
+# DimPlot(hashtag.subset)
+
+# create an HTO heatmap
+HTOHeatmap(hashtag, assay = "HTO", ncells = 5000)
+
+# order level
+hashtag$hash.ID <- factor(hashtag$hash.ID, 
+                          levels = c(paste0("Human-HTO-", c(3,6,7,8,10,12,13,14,15,16)),
+                                     "Doublet", "Negative"))
+
+# number of singlets, multiplets and negatives across captures
+ggplot(hashtag@meta.data) + 
+  geom_bar(aes(x = hash.ID, fill=orig.ident)) + 
+  coord_flip() + 
+  ylab("Number of droplets") + 
+  theme_cowplot(font_size = 10) + 
+  #scale_fill_manual(values = orig.ident_colours) +
+  geom_text(stat='count', aes(x = hash.ID, label=..count..), hjust=-0, size=4) +
+  guides(fill = FALSE)
+
+
+cols <- c(yarrr::piratepal(palette="basel"), yarrr::piratepal(palette="eternal"))
+
+p1 <- ggplot(hashtag@meta.data) + 
+  geom_bar(aes(x = hash.ID)) + 
+  coord_flip() + 
+  scale_y_continuous(limits=c(c(0, 70000)), breaks = seq(10000,60000,10000)) +
+  ylab("Number of droplets") + 
+  theme_cowplot(font_size = 10) + 
+  #scale_fill_manual(values = cols) +
+  geom_text(stat='count', aes(x = hash.ID, label=..count..), hjust=-0, size=4) +
+  guides(fill = FALSE)
+
+p1
+
+```
+
+
+# batch 2
+Load 10x counts [done on 231106]
+```{r }
+# define sample name and data path
+capture_names <- paste0("capture2-", 1:2)
+capture_names <- setNames(capture_names, capture_names)
+captures <- setNames(
+  here(
+    "CellRanger",
+    capture_names,
+    "outs",
+    "multi",
+    "count",
+    "raw_feature_bc_matrix"),
+  capture_names)
+
+# make SingleCellExpreiment object
+sce <- read10xCounts(samples=captures, col.names=TRUE)
+stopifnot(!anyDuplicated(colnames(sce))) # check if there are duplicated cell barcode
+sce <- splitAltExps(sce, rowData(sce)$Type, "Gene Expression") # result: mainExpName: Gene Expression
+                                                               # altExpNames(1): Antibody Capture
+
+# Save a copy of the SCE
+dir.create(here("data", "SCEs"))
+out <- here("data", "SCEs", "expt2.CellRanger.SCE.rds")
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Identify empty droplets
+emptyDrops() from DropletUtils was used to call and remove empty droplets separately for each capture.
+Cells are called at a false discovery rate (FDR) of 0.1% [done on 231106]
+```{r echo=FALSE}
+# Identify empty droplets
+set.seed(100)
+list_of_empties <- lapply(capture_names, function(cn) {
+  message(cn)
+  emptyDrops(counts(sce)[, sce$Sample == cn])
+})
+
+# Check if more permutations are needed; see
+# https://osca.bioconductor.org/quality-control.html#testing-for-empty-droplets
+more_permutations_needed <- sapply(list_of_empties, function(e) {
+  table(
+    Sig = e$FDR <= 0.001,
+    Limited = e$Limited)[1, 2] > 0
+})
+stopifnot(all(!more_permutations_needed))
+
+# save emptyDrops output
+dir.create(here("data", "emptyDrops"))
+for (cn in capture_names) {
+  message(cn)
+  empties <- list_of_empties[[cn]]
+  saveRDS(
+    object = empties,
+    file = here("data", "emptyDrops", paste0(cn, ".emptyDrops.rds")))
+
+  writeLines(
+    text = sce[["Barcode"]][sce$Sample == cn][which(empties$FDR <= 0.001)],
+    con = here(
+      "data",
+      "emptyDrops",
+      paste0(cn, ".barcodes.txt")))
+}
+
+# Preparing HTO data
+is_hto <- rownames(altExp(sce, "Antibody Capture")) %in%
+  paste0("Human_HTO_", c(3,6,10,14,15,16))
+
+altExp(sce, "HTO") <- altExp(sce, "Antibody Capture")[is_hto, ]
+altExp(sce, "Antibody Capture") <- NULL
+
+expSum <- colSums(counts(sce))
+htoSum <- colSums(counts(altExp(sce, "HTO")))
+
+dat <- data.frame(exp = expSum, hto = htoSum)
+
+sce$capture <- factor(sce$Sample)
+capture_names <- levels(sce$capture)
+capture_names <- setNames(capture_names, capture_names)
+
+empties <- do.call(rbind, lapply(capture_names, function(cn) {
+  message(cn)
+  empties <- readRDS(
+    here("data", "emptyDrops", paste0(cn, ".emptyDrops.rds")))
+  empties$capture <- cn
+  empties
+}))
+
+tapply(
+  empties$FDR,
+  empties$capture,
+  function(x) sum(x <= 0.001, na.rm = TRUE)) %>%
+  knitr::kable(
+    caption = "Number of non-empty droplets identified using `emptyDrops()` from **DropletUtils**.")
+
+# Remove empty droplets
+sce <- sce[, which(empties$FDR <= 0.001)] # which(empties$FDR <= 0.001) returns column index (i.e. non-empty droplets)
+
+# save file
+out <- here("data", "SCEs", "expt2.emptyDrops.SCE.rds")
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Demultiplexing [done on 231106]
+```{r}
+# load data
+sce <- readRDS(here("data","SCEs","expt2.emptyDrops.SCE.rds"))
+
+# load in umi and hto matrix
+umis <- counts(sce)
+htos <- counts(altExp(sce))
+
+# # alternatively, load from directory
+# umis <- readRDS(here('data_230503/SCEs/G000323.umi.rds'))
+# htos <- readRDS(here('data_230503/SCEs/G000323.hto.rds'))
+
+# Select cell barcodes detected by both RNA and HTO
+joint.bcs <- intersect(colnames(umis), colnames(htos))
+
+# Subset RNA and HTO counts by joint cell barcodes
+umis <- umis[, joint.bcs]
+htos <- as.matrix(htos[, joint.bcs])
+
+# Confirm that the HTO have the correct names
+rownames(htos)
+
+# Setup Seurat object
+hashtag <- CreateSeuratObject(counts = umis)
+
+# Normalize RNA data with log normalization
+hashtag <- NormalizeData(hashtag)
+
+# Find and scale variable features
+hashtag <- FindVariableFeatures(hashtag, selection.method = "mean.var.plot")
+hashtag <- ScaleData(hashtag, features = VariableFeatures(hashtag))
+
+# Add HTO data as a new assay independent from RNA
+hashtag[["HTO"]] <- CreateAssayObject(counts = htos)
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+hashtag <- NormalizeData(hashtag, assay = "HTO", normalization.method = "CLR")
+
+# Demultiplex cells based on HTO enrichment
+hashtag <- HTODemux(hashtag, assay = "HTO", positive.quantile = 0.99)
+
+# Global classification results
+table(hashtag$HTO_classification.global)
+
+# add demultiplexing information to SCE
+sce$HTO_HTODemux <- factor(gsub("-","_",hashtag$hash.ID), 
+                           levels = c(paste0("Human_HTO_", 
+                                             c(3,6,10,14,15,16)),
+                                      "Doublet", "Negative"))
+sce$HTODemux_result <- hashtag@meta.data
+
+# add colour
+sce$colours <- S4Vectors::make_zero_col_DFrame(ncol(sce))
+
+hto_colours <- setNames(
+  c(palette.colors(nlevels(sce$HTO_HTODemux), "Paired"),"grey","black"),
+  levels(sce$HTO_HTODemux))
+sce$colours$hto_colours <- hto_colours[sce$HTO_HTODemux]
+
+capture_colours <- setNames(
+  palette.colors(nlevels(sce$capture), "Accent"),
+  levels(sce$capture))
+sce$colours$capture_colours <- capture_colours[sce$capture]
+
+
+out <- here("data",
+            "SCEs", 
+            "expt2.demultiplexed.SCE.rds")
+
+if(!file.exists(out)) saveRDS(sce, out)
+
+```
+
+Visualize demultiplexing results
+```{r}
+# Group cells based on the max HTO signal
+Idents(hashtag) <- "HTO_maxID"
+RidgePlot(hashtag, assay = "HTO", features = rownames(hashtag[["HTO"]])[1:10], ncol = 4)
+
+Idents(hashtag) <- "HTO_classification.global"
+VlnPlot(hashtag, features = "nCount_RNA", pt.size = 0.1, log = TRUE, raster=FALSE)
+
+## Generate a 2D tSNE embeddings for HTOs.
+# First, we will remove negative cells from the object
+hashtag.subset <- subset(hashtag, idents = "Negative", invert = TRUE)
+
+# # Calculate a tSNE embedding of the HTO data
+# DefaultAssay(hashtag.subset) <- "HTO"
+# hashtag.subset <- ScaleData(hashtag.subset, features = rownames(hashtag.subset))
+# hashtag.subset <- RunPCA(hashtag.subset, features = rownames(hashtag.subset), approx = FALSE)
+# hashtag.subset <- RunTSNE(hashtag.subset, dims = 1:8, perplexity = 100)
+# DimPlot(hashtag.subset)
+
+# create an HTO heatmap
+HTOHeatmap(hashtag, assay = "HTO", ncells = 5000)
+
+# order level
+hashtag$hash.ID <- factor(hashtag$hash.ID, 
+                          levels = c("Human-HTO-3", "Human-HTO-6",
+                                     "Human-HTO-10", "Human-HTO-14",
+                                     "Human-HTO-15", "Human-HTO-16",
+                                     "Doublet", "Negative"))
+
+# number of singlets, multiplets and negatives across captures
+ggplot(hashtag@meta.data) + 
+  geom_bar(aes(x = hash.ID, fill=orig.ident)) + 
+  coord_flip() + 
+  ylab("Number of droplets") + 
+  theme_cowplot(font_size = 10) + 
+  #scale_fill_manual(values = orig.ident_colours) +
+  geom_text(stat='count', aes(x = hash.ID, label=..count..), hjust=-0, size=4) +
+  guides(fill = FALSE)
+
+
+cols <- c(yarrr::piratepal(palette="basel"), yarrr::piratepal(palette="eternal"))
+
+p1 <- ggplot(hashtag@meta.data) + 
+  geom_bar(aes(x = hash.ID)) + 
+  coord_flip() + 
+  scale_y_continuous(limits=c(c(0, 70000)), breaks = seq(10000,60000,10000)) +
+  ylab("Number of droplets") + 
+  theme_cowplot(font_size = 10) + 
+  #scale_fill_manual(values = cols) +
+  geom_text(stat='count', aes(x = hash.ID, label=..count..), hjust=-0, size=4) +
+  guides(fill = FALSE)
+
+p1
+
+```
+

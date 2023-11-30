@@ -1,0 +1,13 @@
+[gene-expression]
+reference,/group/canc2/anson/reference/genome/cellranger/refdata-gex-GRCh38-2020-A
+
+[feature]
+reference,/group/canc2/anson/reference/genome/cellranger/expt1.features.csv
+
+[libraries]
+fastq_id,fastqs,feature_types
+G000323_2_GEX,/group/canc2/anson/raw/G000323_Neeland/S000363/data/fastq_GEX/AAAVCHYHV/outs/fastq_path/AAAVCHYHV,Gene Expression
+G000323_2_HTO,/group/canc2/anson/raw/G000323_Neeland/S000363/data/fastq_HTO,Antibody capture
+G000323_2_GEX,/group/canc2/anson/raw/G000323_Neeland/S000367/data/fastq_GEX/AAAVFKFHV/outs/fastq_path/AAAVFKFHV,Gene Expression
+G000323_2_HTO,/group/canc2/anson/raw/G000323_Neeland/S000367/data/fastq_HTO,Antibody capture
+G000323_2_GEX,/group/canc2/anson/raw/G000323_Neeland/S000377/data/fastq_GEX/AACJ2KMM5/outs/fastq_path/AACJ2KMM5,Gene Expression

@@ -1,0 +1,3211 @@
+---
+title: "Pseudotime inference"
+author: "Anson Wong"
+date: '2023-07-05'
+output: html_document
+---
+
+Load packages
+```{r}
+suppressPackageStartupMessages(library(monocle3))
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(SeuratData))
+suppressPackageStartupMessages(library(SeuratWrappers))
+suppressPackageStartupMessages(library(patchwork))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(scCustomize))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(Polychrome))
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(pals))
+suppressPackageStartupMessages(library(nrmisc))
+suppressPackageStartupMessages(library(paletteer))
+suppressPackageStartupMessages(library(BiocStyle))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(glue))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(ggpubr))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(ggsci))
+suppressPackageStartupMessages(library(ggthemes))
+suppressPackageStartupMessages(library(gplots))
+suppressPackageStartupMessages(library(speckle))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(tidyHeatmap))
+suppressPackageStartupMessages(library(ggplotify))
+suppressPackageStartupMessages(library(jpeg))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(phateR))
+suppressPackageStartupMessages(library(dittoSeq))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(tidyHeatmap))
+suppressPackageStartupMessages(library(ggplotify))
+suppressPackageStartupMessages(library(jpeg))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(slingshot))
+suppressPackageStartupMessages(library(tradeSeq))
+suppressPackageStartupMessages(library(tidymodels))
+suppressPackageStartupMessages(library(reticulate))
+
+```
+
+Read object
+```{r}
+seu <- readRDS('data_230628/SCEs/G000323.clustered.Zilionis.HLCA.mac.integrated.subclustered.annotated.SEU.rds')
+seu$predicted.ann_level_3 <- factor(seu$predicted.ann_level_3)
+seu$predicted.ann_level_4 <- factor(seu$predicted.ann_level_4)
+seu$predicted.ann_finest_level <- factor(seu$predicted.ann_finest_level)
+seu$Annotation <- factor(seu$Annotation)
+seu$HTO_HTODemux <- factor(seu$HTO_HTODemux,
+                           levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+# add condition1
+condition1 <- setNames(c(rep("CF",8),
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition1 <- condition1[seu$HTO_HTODemux]
+names(condition1) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition1, col.name = "condition1")
+seu$condition1 <- as.factor(seu$condition1)
+
+# add condition2
+condition2 <- setNames(c(rep("ETI-treated",4), # Trikafta indiv as treated
+                         rep("CF-untreated",4),
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition2 <- condition2[seu$HTO_HTODemux]
+names(condition2) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition2, col.name = "condition2")
+seu$condition2 <- factor(seu$condition2,
+                         levels=c("ETI-treated","CF-untreated","Healthy"))
+
+# add condition3
+condition3 <- setNames(c(rep(c("ETI-treated_t1","ETI-treated_t2"),2),
+                         rep(c("CF-untreated_t1","CF-untreated_t2"),2),
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition3 <- condition3[seu$HTO_HTODemux]
+names(condition3) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition3, col.name = "condition3")
+seu$condition3 <- as.factor(seu$condition3)
+
+# add timepoint to metadata
+timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(seu$HTO_HTODemux))
+timepoint <- timepoint[seu$HTO_HTODemux]
+names(timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# reorder Annotation
+seu$Annotation <- factor(seu$Annotation, levels=c("alvMΦ",
+                                                  "recMo/MΦ",
+                                                  "alvMΦ-proliferating",
+                                                  "alvMΦ-CCL",
+                                                  "alvMΦ-IFN",
+                                                  "alvMΦ-lipid",
+                                                  "alvMΦ-MT",
+                                                  "alvMΦ-T"))
+
+# add subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(seu$HTO_HTODemux))
+
+Subject <- Subject[seu$HTO_HTODemux]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                      levels=c("ETI1","ETI2",
+                               "UT1","UT2",
+                               "HC1","HC2"))
+
+# add Sample to metadata
+Sample <- setNames(c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"),levels(seu$HTO_HTODemux))
+
+Sample <- Sample[seu$HTO_HTODemux]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                          levels=c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"))
+
+# UMAP for Annotation - Fig. 1c
+# make a flipped umap
+flip.mtx <- seu[["umap"]][[]]
+flip.mtx[,2] <- -flip.mtx[,2]
+seu[['umap']] <- CreateDimReducObject(embeddings = flip.mtx, key = "UMAP_", global = T, assay = "RNA")
+
+Annotation.colours <- setNames(c("#81a4cd", #AM
+                             "#fb6f92", #recMo/MΦ
+                             "#7d451b", #AM-proliferating
+                             "#f77f00", #AM-CCL
+                             "#b23a48", # AM-IFN
+                             "#054a91", #AM-lipid
+                             "#5a189a", #AM-MT
+                             "#a3b18a" #AM-T
+                             ), levels(seu$Annotation))
+
+s <- seu
+seu <- NULL
+
+```
+
+# PHATE (ETI T1 vs UT T1 Vs Healthy)
+Subset
+```{r}
+# set scelltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c("CF-untreated_t1",
+                                                                "ETI-treated_t1",
+                                                                "Healthy"
+                                                                ) &
+                HTO_HTODemux != "Human_HTO_16")
+
+seu1$condition3 <- fct_drop(seu1$condition3)
+seu1$Subject <- fct_drop(seu1$Subject)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+```
+
+PHATE (Healthy)
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c(
+                                                                "Healthy"
+                                                                ))
+seu1$condition3 <- fct_drop(seu1$condition3)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+seu1@reductions$PHATE@cell.embeddings[,1] <- -seu1@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu1$Subject))
+
+seu1@reductions$PHATE@cell.embeddings[,2] <- -seu1@reductions$PHATE@cell.embeddings[,2]
+fs3b <- DimPlot(seu1, 
+        group.by = "Subject", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Subject.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+ggsave(plot=last_plot(), filename = "fs3.230905.jpeg", device="jpeg", dpi=600, height=3, width=4)
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce1 <- as.SingleCellExperiment(seu1)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu1, reduction="PHATE")
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="6", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce1)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+
+fs3a <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+layout = "AAAA\nBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 1400)
+(fs3a | fs3b) / (fs3c | fs3d) +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1200,
+       filename = "FigS3a.230905.jpeg",
+       height=6,
+       width=8)
+
+```
+
+PHATE (ETI1)
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & HTO_HTODemux %in% c("Human_HTO_3", "Human_HTO_6"))
+seu1$condition3 <- fct_drop(seu1$condition3)
+seu1$HTO_HTODemux <- fct_drop(seu1$HTO_HTODemux)
+seu1$Subject <- fct_drop(seu1$Subject)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=30,
+                      t=80
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+seu1@reductions$PHATE@cell.embeddings[,1] <- -seu1@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(seu1$Timepoint))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu1$Subject))
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu1$Sample))
+seu1@reductions$PHATE@cell.embeddings[,2] <- -seu1@reductions$PHATE@cell.embeddings[,2]
+
+fs3b <- DimPlot(seu1, 
+        group.by = "Sample", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Sample.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce1 <- as.SingleCellExperiment(seu1)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu1, reduction="PHATE")
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="4", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce1)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+fs3a <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d) #+
+
+
+ggsave(plot=last_plot(), filename = "M1C188.pseudotime.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+
+```
+
+PHATE (ETI2)
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu2 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & HTO_HTODemux %in% c("Human_HTO_7", "Human_HTO_8"))
+seu2$condition3 <- fct_drop(seu2$condition3)
+seu2$HTO_HTODemux <- fct_drop(seu2$HTO_HTODemux)
+seu2$Subject <- fct_drop(seu2$Subject)
+DefaultAssay(seu2) <- "RNA"
+
+# normalize and scale data
+seu2 <- NormalizeData(seu2)
+seu2 <- ScaleData(seu2)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu2) <- "RNA"
+seu2 <- SCTransform(seu2, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu2@assays$RNA@data[VariableFeatures(seu2),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=20
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu2[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu2))
+seu2@reductions$PHATE@cell.embeddings[,1] <- -seu2@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu2 <- FindNeighbors(seu2, reduction = "PHATE", dims = 1:2)
+seu2 <- FindClusters(seu2, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu2$Subject))
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu2$Sample))
+#seu2@reductions$PHATE@cell.embeddings[,2] <- -seu2@reductions$PHATE@cell.embeddings[,2]
+
+fs3b <- DimPlot(seu2, 
+        group.by = "Sample", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Sample.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce2 <- as.SingleCellExperiment(seu2)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu2, reduction="PHATE")
+set.seed(1)
+sce2 <- slingshot(sce2,
+                 clusterLabels = seu2$seurat_clusters,
+                 start.clus="1", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds2 <- as.SlingshotDataSet(sce2)
+sds2
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce2$slingPseudotime_1, colnames(counts(sce2)))
+
+seu2 <- AddMetaData(seu2, Pseudotime, col.name = "Pseudotime")
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+fs3a <- FeaturePlot(seu2,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu2,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu2,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d) #+
+
+
+ggsave(plot=last_plot(), filename = "M1C160.pseudotime.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+
+```
+
+
+PHATE (UT1)
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & HTO_HTODemux %in% c("Human_HTO_10", "Human_HTO_12"))
+seu1$condition3 <- fct_drop(seu1$condition3)
+seu1$HTO_HTODemux <- fct_drop(seu1$HTO_HTODemux)
+seu1$Subject <- fct_drop(seu1$Subject)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=100,
+                      npca=30,
+                      t=80
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+#seu1@reductions$PHATE@cell.embeddings[,1] <- -seu1@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu1$Subject))
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu1$Sample))
+#seu1@reductions$PHATE@cell.embeddings[,2] <- -seu1@reductions$PHATE@cell.embeddings[,2]
+
+fs3b <- DimPlot(seu1, 
+        group.by = "Sample", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Sample.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce1 <- as.SingleCellExperiment(seu1)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu1, reduction="PHATE")
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="7", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce1)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+fs3a <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d) #+
+
+
+ggsave(plot=last_plot(), filename = "M1C170.pseudotime.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+
+```
+
+PHATE (UT2)
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu2 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & HTO_HTODemux %in% c("Human_HTO_13", "Human_HTO_14"))
+seu2$condition3 <- fct_drop(seu2$condition3)
+seu2$HTO_HTODemux <- fct_drop(seu2$HTO_HTODemux)
+seu2$Subject <- fct_drop(seu2$Subject)
+DefaultAssay(seu2) <- "RNA"
+
+# normalize and scale data
+seu2 <- NormalizeData(seu2)
+seu2 <- ScaleData(seu2)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu2) <- "RNA"
+seu2 <- SCTransform(seu2, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu2@assays$RNA@data[VariableFeatures(seu2),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=30,
+                      t=100
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu2[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu2))
+#seu2@reductions$PHATE@cell.embeddings[,1] <- -seu2@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu2 <- FindNeighbors(seu2, reduction = "PHATE", dims = 1:2)
+seu2 <- FindClusters(seu2, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu2$Subject))
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu2$Sample))
+#seu2@reductions$PHATE@cell.embeddings[,2] <- -seu2@reductions$PHATE@cell.embeddings[,2]
+
+fs3b <- DimPlot(seu2, 
+        group.by = "Sample", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Sample.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce2 <- as.SingleCellExperiment(seu2)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu2, reduction="PHATE")
+set.seed(1)
+sce2 <- slingshot(sce2,
+                 clusterLabels = seu2$seurat_clusters,
+                 start.clus="4", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds2 <- as.SlingshotDataSet(sce2)
+sds2
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce2$slingPseudotime_1, colnames(counts(sce2)))
+
+seu2 <- AddMetaData(seu2, Pseudotime, col.name = "Pseudotime")
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+fs3a <- FeaturePlot(seu2,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu2,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu2,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d) #+
+
+
+ggsave(plot=last_plot(), filename = "M1C176.pseudotime.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+
+```
+
+
+PHATE (ETI-treated T1 vs CF-untreated T1 vs Healthy) 230914
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c(
+                                                                "ETI-treated_t1",
+                                                                "CF-untreated_t1",
+                                                                "Healthy"
+                                                                ))
+seu1$condition2 <- fct_drop(seu1$condition2)
+seu1$condition3 <- fct_drop(seu1$condition3)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+seu1@reductions$PHATE@cell.embeddings[,1] <- -seu1@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu1$Subject))
+
+seu1@reductions$PHATE@cell.embeddings[,2] <- -seu1@reductions$PHATE@cell.embeddings[,2]
+fs3b <- DimPlot(seu1, 
+        group.by = "condition2", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Condition2.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+
+fs3f <- DimPlot(seu1, 
+        group.by = "Timepoint", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Timepoint.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12))
+
+ggsave(plot=last_plot(), filename = "fs3.230905.jpeg", device="jpeg", dpi=600, height=3, width=4)
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce1 <- as.SingleCellExperiment(seu1)
+
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu1, reduction="PHATE")
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="8", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce1)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+
+fs3a <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d)
+ggsave(plot=last_plot(), filename = "for.illustration.2.230919.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+# layout = "AAAA\nBBBB"
+# showtext::showtext_auto()
+# showtext::showtext_opts(dpi = 1400)
+# (fs3a | fs3b) / (fs3c | fs3d) +
+#   plot_layout(design = layout) +
+#   plot_annotation(tag_levels = "A") & 
+#   theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+# ggsave(plot=last_plot(),
+#        device="jpeg",
+#        dpi=1200,
+#        filename = "FigS3a.230905.jpeg",
+#        height=6,
+#        width=8)
+
+```
+
+PHATE (ETI-treated T2 vs CF-untreated T2 vs Healthy) 230914
+```{r}
+# set celltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu1 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c(
+                                                                "ETI-treated_t2",
+                                                                "CF-untreated_t2",
+                                                                "Healthy"
+                                                                ))
+seu1$condition2 <- fct_drop(seu1$condition2)
+seu1$condition3 <- fct_drop(seu1$condition3)
+DefaultAssay(seu1) <- "RNA"
+
+# normalize and scale data
+seu1 <- NormalizeData(seu1)
+seu1 <- ScaleData(seu1)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+seu1@reductions$PHATE@cell.embeddings[,1] <- -seu1@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu1$Subject))
+
+seu1@reductions$PHATE@cell.embeddings[,2] <- -seu1@reductions$PHATE@cell.embeddings[,2]
+fs3b <- DimPlot(seu1, 
+        group.by = "condition2", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Condition2.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+fs3b
+
+
+fs3f <- DimPlot(seu1, 
+        group.by = "Timepoint", 
+        reduction="PHATE",
+        pt.size = 0.3,
+        cols = Timepoint.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=12))
+
+ggsave(plot=last_plot(), filename = "fs3.230905.jpeg", device="jpeg", dpi=600, height=3, width=4)
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+
+sce1 <- as.SingleCellExperiment(seu1)
+
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+DimPlot(seu1, reduction="PHATE")
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="1", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce1)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+
+fs3a <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)) #+ NoLegend()
+
+fs3c <- ((FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("MARCKS")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12))))
+  
+fs3d <- (FeaturePlot(seu1,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+    theme_minimal() +
+    theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size = 10, hjust=0.5, face="bold.italic"),
+        legend.key.size = unit(0.4, "cm"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(face="bold", size=12)))
+
+(fs3a | fs3b) / (fs3c | fs3d)
+ggsave(plot=last_plot(), filename = "for.illustration.3.230919.jpeg", device="jpeg", height=6, width=8, dpi=600)
+
+# layout = "AAAA\nBBBB"
+# showtext::showtext_auto()
+# showtext::showtext_opts(dpi = 1400)
+# (fs3a | fs3b) / (fs3c | fs3d) +
+#   plot_layout(design = layout) +
+#   plot_annotation(tag_levels = "A") & 
+#   theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+# ggsave(plot=last_plot(),
+#        device="jpeg",
+#        dpi=1200,
+#        filename = "FigS3a.230905.jpeg",
+#        height=6,
+#        width=8)
+
+```
+
+
+Dimensionality reduction with PHATE
+```{r}
+DefaultAssay(seu1) <- "RNA"
+seu1 <- SCTransform(seu1, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu1@assays$RNA@data[VariableFeatures(seu1),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seu1rat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu1[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu1))
+
+# FindNeighbors
+seu1 <- FindNeighbors(seu1, reduction = "PHATE", dims = 1:2)
+seu1 <- FindClusters(seu1, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+
+
+seu1@reductions$PHATE@cell.embeddings[,c(1,2)] <- -seu1@reductions$PHATE@cell.embeddings[,c(1,2)]
+
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu1 to sce
+sce1 <- as.SingleCellExperiment(seu1)
+## Remarks on counts
+# note that pseu13dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+DimPlot(seu1, group.by = "seurat_clusters", reduction="PHATE")
+
+# Run Slingshot
+set.seed(1)
+sce1 <- slingshot(sce1,
+                 clusterLabels = seu1$seurat_clusters,
+                 start.clus="8", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds1 <- as.SlingshotDataSet(sce1)
+sds1
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce1$slingPseudotime_1, colnames(counts(sce1)))
+pal <- c("#E3F2FD", "#B8C9E1", "#8CA0C5", "#6176AA", "#354D8E", "#0A2472")
+
+seu1 <- AddMetaData(seu1, Pseudotime, col.name = "Pseudotime")
+
+f3b1 <- FeaturePlot(seu1,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3,
+                    order = TRUE) +
+  xlim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu1@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+f3b2 <- DimPlot(seu1, 
+        reduction = "PHATE",
+        group.by = "condition2",
+        pt.size = 0.3,
+        cols = Condition2.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+f3b3 <- DimPlot(seu1, 
+        reduction = "PHATE",
+        group.by = "predicted.ann_level_3",
+        pt.size = 0.3,
+        #cols = Condition2.colors,
+        shuffle = TRUE) +
+  scale_color_manual(values = c("#ffdab9","#ff8fab")) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+f3bi <- f3b1|f3b2|f3b3
+f3bi/f3bii
+```
+
+# PHATE on all cells
+PHATE
+```{r}
+seu <- subset(s, 
+              Annotation %in% c("recMo/MΦ"))
+seu$condition3 <- fct_drop(seu$condition3)
+DefaultAssay(seu) <- "RNA"
+
+# normalize and scale data
+seu <- NormalizeData(seu)
+seu <- ScaleData(seu)
+
+DefaultAssay(seu) <- "RNA"
+seu <- SCTransform(seu, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu@assays$RNA@data[VariableFeatures(seu),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seu1rat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu))
+
+# FindNeighbors
+seu <- FindNeighbors(seu, reduction = "PHATE", dims = 1:2)
+seu <- FindClusters(seu, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+
+
+seu@reductions$PHATE@cell.embeddings[,1] <- -seu@reductions$PHATE@cell.embeddings[,1]
+
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu1 to sce
+sce <- as.SingleCellExperiment(seu)
+## Remarks on counts
+# note that pseu13dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+DimPlot(seu, group.by = "seurat_clusters", reduction="PHATE")
+FeaturePlot(seu,
+                    reduction = "PHATE",
+                    features = "FABP4",
+                    pt.size = 0.0001,
+                    order = TRUE) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+# Run Slingshot
+set.seed(1)
+sce <- slingshot(sce,
+                 clusterLabels = seu$seurat_clusters,
+                 start.clus="2", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce$slingPseudotime_1, colnames(counts(sce)))
+
+seu <- AddMetaData(seu, Pseudotime, col.name = "Pseudotime")
+
+```
+
+Heatmap
+```{r}
+# pdt palette
+# pal <- c("#E3F2FD","#DCEBF8","#D4E4F3","#CDDDEF","#C5D6EA","#BECEE5",
+#          "#B6C7E0","#AFC0DB","#A7B9D7","#A0B2D2","#98ABCD","#91A4C8",
+#          "#899DC3","#8296BF","#7A8FBA","#7387B5","#6B80B0","#6479AC",
+#          "#5C72A7","#556BA2","#4D649D","#465D98","#3E5694","#374F8F",
+#          "#2F488A","#284085","#203980","#19327C","#112B77","#0A2472")
+
+pal <- c("#E3F2FD", "#B8C9E1", "#8CA0C5", "#6176AA", "#354D8E", "#0A2472")
+
+# add condition
+seu <- AddMetaData(seu, metadata = seu$condition2, col.name="Condition")
+
+# add subtype
+Cell.type <- setNames(c("MoM","Mo" #8 
+                    ), levels(seu$predicted.ann_level_3))
+
+Cell.type <- Cell.type[seu$predicted.ann_level_3]
+
+names(Cell.type) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Cell.type, col.name = "RM.cluster")
+seu$RM.cluster <- factor(seu$RM.cluster, levels=c("Mo","MoM"))
+
+Cell.type.colors <- setNames(c("#ff8fab","#ffdab9"),levels(seu$RM.cluster))
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu$Sample))
+seu$Subject <- fct_drop(seu$Subject)
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu$Subject))
+
+f3a <- grid.grabExpr(draw(dittoHeatmap(seu,
+                                       assay="RNA",
+             slot="data",
+             genes=c("FCN1",#"CD300E",
+                     "GPR183","MARCKS","METRNL","FGL2","RNASE6",#"FCGR2B",
+                     #"F13A1","RNASE1","STAB1",
+                     "VCAN", 
+                     "FABP4","APOC1",
+                     "C1QA","C1QB","C1QC","MARCO",
+                     "APOE","MSR1","MRC1"
+                     ),
+             order.by = c("Pseudotime"),
+             annot.by = rev(c("Pseudotime","Condition","Subject","RM.cluster")),
+             heatmap.colors.max.scaled = viridis(256),
+             width=unit(1/ncol(seu), "npc"),
+             #width=unit(0.8/ncol(seu), "npc"),
+             complex = TRUE,
+             scaled.to.max = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             annotation_colors = list("Condition" = Condition2.colors,
+                                      "Pseudotime" = pal,
+                                      "RM.cluster" = Cell.type.colors,
+                                      "Subject" = Subject.colors
+                                     ),
+             legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+             name = "Scale",
+             fontsize_row= 8,
+             fontface_row = "italic",
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical",
+                                         show_annotation_name=FALSE
+                                         ),
+             cellheight=16,
+             cellwidth=0.08
+             )))
+as.ggplot(f3a)
+
+```
+
+PHATE (ETI T2 vs UT T2 vs Healthy)
+```{r}
+seu2 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c("CF-untreated_t2",
+                                                                "ETI-treated_t2",
+                                                                "Healthy"
+                                                                ) &
+                HTO_HTODemux != "Human_HTO_15")
+seu2$condition3 <- fct_drop(seu2$condition3)
+DefaultAssay(seu2) <- "RNA"
+
+# normalize and scale data
+seu2 <- NormalizeData(seu2)
+seu2 <- ScaleData(seu2)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu) <- "RNA"
+seu2 <- SCTransform(seu2, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu2@assays$RNA@data[VariableFeatures(seu2),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu2[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu2))
+seu2@reductions$PHATE@cell.embeddings[,1] <- -seu2@reductions$PHATE@cell.embeddings[,1]
+# FindNeighbors
+seu2 <- FindNeighbors(seu2, reduction = "PHATE", dims = 1:2)
+seu2 <- FindClusters(seu2, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition2.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated","CF-untreated","Healthy"))
+
+# Slingshot
+# Trajectory inference using Slingshot =========================================
+# convert seu to sce
+sce2 <- as.SingleCellExperiment(seu2)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+DimPlot(seu2, group.by = "seurat_clusters", reduction="PHATE")
+# Run Slingshot
+set.seed(1)
+sce2 <- slingshot(sce2,
+                 clusterLabels = seu2$seurat_clusters,
+                 start.clus="7", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce2)
+sds
+
+# F2d ==========================================================================
+Pseudotime <- setNames(sce2$slingPseudotime_1, colnames(counts(sce2)))
+
+seu2 <- AddMetaData(seu2, Pseudotime, col.name = "Pseudotime")
+
+f3b4 <- FeaturePlot(seu2,
+                    reduction = "PHATE",
+                    features = "Pseudotime",
+                    pt.size = 0.3, 
+                    order = TRUE) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+(FeaturePlot(seu2,
+                    reduction = "PHATE",
+                    features = c("FABP4"),
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend())
+  (FeaturePlot(seu2,
+                    reduction = "PHATE",
+                    features = c("SPP1"),
+                    pt.size = 0.3, order = TRUE) +
+  xlim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu2@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = pal) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend())
+
+f3b5 <- DimPlot(seu2, 
+        reduction = "PHATE",
+        group.by = "condition2",
+        pt.size = 0.3,
+        cols = Condition2.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+f3b6 <- DimPlot(seu2, 
+        reduction = "PHATE",
+        group.by = "predicted.ann_level_3",
+        pt.size = 0.3,
+        #cols = Condition2.colors,
+        shuffle = TRUE) +
+  scale_color_manual(values = c("#ffdab9","#ff8fab")) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12)) + NoLegend()
+
+f3bii <- (f3b4|f3b5|f3b6)
+
+f3b <- (f3bi)/(f3bii)
+f3b
+```
+
+Violin plot of Mo and MoM markers
+```{r}
+# function to append vectors
+lappend <- function (lst, ...){
+lst <- c(lst, list(...))
+  return(lst)
+}
+
+features <- c("MARCKS","VCAN","C1QA","MARCO")
+
+# Timepoint 1
+pts <- VlnPlot(seu1,
+               assay = "SCT",
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "condition2",
+               combine = FALSE,
+               same.y.lims = FALSE)
+
+plots <- list()
+
+for (j in seq(length(pts))) {
+  message(features[j])
+  #values <- unlist(df[,grep(features[j], colnames(df))])  
+  p <- pts[[j]] + ggtitle(features[j]) +
+    theme(plot.title=element_text(size=10,face="bold.italic"),
+          axis.text.y = element_text(size=6),
+          axis.text.x = element_blank(),
+          axis.title=element_blank()) +
+    #scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(values = Condition2.colors) + NoLegend()
+  plots <- lappend(plots, p)
+}
+
+p1 <- plot_grid(plotlist=plots, ncol=5,nrow=1)
+
+# TImepoint 2
+pts <- VlnPlot(seu2,
+               assay = "SCT",
+               features = features,
+               pt.size = 0,
+               ncol = 1,
+               group.by = "condition2",
+               combine = FALSE,
+               same.y.lims = FALSE)
+
+plots <- list()
+
+for (j in seq(length(pts))) {
+  message(features[j])
+  #values <- unlist(df[,grep(features[j], colnames(df))])  
+  p <- pts[[j]] + ggtitle(features[j]) +
+    theme(plot.title=element_text(size=10,face="bold.italic"),
+          axis.text.y = element_text(size=6),
+          axis.text.x = element_blank(),
+          axis.title=element_blank()) +
+    #scale_y_continuous(limits = quantile(values, c(0.001,0.995))) +
+    scale_fill_manual(values = Condition2.colors) + NoLegend()
+  plots <- lappend(plots, p)
+}
+
+p2 <- plot_grid(plotlist=plots, ncol=4,nrow=1)
+
+f3c <- p1/p2
+f3c
+```
+
+Figure 3
+```{r}
+layout = "AAAAAA\nBBBBBB\nBBBBBB"
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 100)
+
+(ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+    f3a +
+    plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+ 
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=7,width=14,
+       dpi=1600,
+       filename="Fig3a.230815.jpeg")
+
+f3b
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=4,width=8,
+       dpi=1600,
+       filename="Fig3b.230815.jpeg")
+
+f3c
+ggsave(plot=last_plot(),
+       device="jpeg",
+       height=4,width=8,
+       dpi=1600,
+       filename="Fig3c.230815.jpeg")
+
+f3d
+as.ggplot(f3a)+f3b+f3c+
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+
+(ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+  (ggplot(data.frame(x = 1, y = 1), aes(x, y)) + 
+    geom_point(colour = "white") +
+    theme_void()) +
+  f2e +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 14, face = "bold", family="Ariel"))
+ggsave(plot=last_plot(),
+       device="jpeg",
+       dpi=1200,
+       filename = "Fig2d.230801.jpeg",
+       height=12,
+       width=16)
+rbind(f3b1, f3b2,f3b3)
+showtext::showtext_auto()
+showtext::showtext_opts(dpi = 100)
+ggsave(plot=f2di/f2dii,
+       device="jpeg",
+       height=6,width=9,
+       dpi=1200,
+       filename="Fig2e.230801.jpeg")
+```
+
+**PHATE (ETI T1 vs ETI T2 vs Healthy)
+```{r}
+# set scelltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu3 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c("ETI-treated_t1",
+                                                                "ETI-treated_t2",
+                                                                "Healthy"
+                                                                ))
+seu3$condition3 <- fct_drop(seu3$condition3)
+DefaultAssay(seu3) <- "RNA"
+
+# normalize and scale data
+seu3 <- NormalizeData(seu3)
+seu3 <- ScaleData(seu3)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu) <- "RNA"
+seu3 <- SCTransform(seu3, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu3@assays$RNA@data[VariableFeatures(seu3),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu3[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu3))
+
+# FindNeighbors
+seu3 <- FindNeighbors(seu3, reduction = "PHATE", dims = 1:2)
+seu3 <- FindClusters(seu3, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition3.colors <- setNames(c("#a4133c", "#ffa5ab", "#5b8e7d"),
+                              c("ETI-treated_t1","ETI-treated_t2","Healthy"))
+Timepoint.colors <- setNames(c("#a4133c", "#d8572a", "#5b8e7d"),
+                              c("T1","T2","N/A"))
+
+# F2d ==========================================================================
+#seu3@reductions$PHATE@cell.embeddings[,c(1,2)] <- -seu3@reductions$PHATE@cell.embeddings[,c(1,2)]
+
+f2d5 <- DimPlot(seu3, 
+        reduction = "PHATE",
+        group.by = "condition1",
+        cols = Condition1.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+
+f2d6 <- DimPlot(seu3, 
+        reduction = "PHATE",
+        group.by = "Timepoint",
+        cols = Timepoint.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+
+f2d5+f2d6
+
+# Visualize PHATE_cluster. Look for the central cluster as starting point
+DimPlot(seu3,
+        reduction = "PHATE",
+        group.by = "seurat_clusters")
+
+# Trajectory inference using Slingshot =========================================
+# convert seu3 to sce3
+sce3 <- as.SingleCellExperiment(seu3)
+## Remarks on counts
+# note that pseu3dotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+set.seed(1)
+sce3 <- slingshot(sce3,
+                  clusterLabels = seu3$seurat_clusters,
+                  start.clus="9", #  ** define the starting cluster here **
+                  reducedDim = "PHATE",
+                  allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce3)
+sds
+
+# save objects
+#RM.list <- list(seu3,sce3,assoRes,endRes)
+
+pdt.left <- setNames(sce3$slingPseudotime_1, colnames(counts(sce3)))
+
+seu3 <- AddMetaData(seu3, pdt.left, col.name = "pdt.left")
+
+df <- data.frame("PHATE_1" = as.numeric(seu3@reductions$PHATE@cell.embeddings[,1]),
+                 "PHATE_2" = as.numeric(seu3@reductions$PHATE@cell.embeddings[,2]),
+                 "pdt.left" = as.numeric(seu3@meta.data$pdt.left))
+ggplot(df, aes(x=PHATE_1, y=PHATE_2)) +
+  geom_point(aes(colour=pdt.left),size=0.3, alpha=1) +
+  theme_minimal() +
+  scale_color_gradient2(high="#3a5a40", low="#a3b18a", na.value = "#dedbd8") +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=10)) +
+  guides(fill = guide_legend(keyheight=0.05,
+                             keywidth=0.05))
+
+# DE with TradeSeq =============================================================
+# prepare countMatrix
+# Removing some genes to speed up the computations for this tutorial
+# filt_counts <- counts
+counts <- seu3@assays$RNA@counts
+filt_counts <- counts[rowSums(counts > 5) > ncol(counts)/100, ]
+
+# # fit negative binomial model
+# set.seed(1)
+# icMat <- evaluateK(counts = filt_counts, sds = sds, k = 3:10, 
+#                    nGenes = 200, verbose = T)
+
+# GAM fitting
+pseu3dotime <- slingPseu3dotime(sds, na = FALSE)
+cellWeights <- slingCurveWeights(sds)
+sce <- fitGAM(counts = filt_counts, 
+              pseu3dotime = pseu3dotime, 
+              cellWeights = cellWeights,
+              nknots = 6, verbose = TRUE)
+
+table(rowData(sce)$tradeSeq$converged)
+
+# association of gene expression with pseu3dotime
+assoRes <- associationTest(sce, global=FALSE, lineages=TRUE)
+assoRes
+
+# pdt.1
+assoRes.pdt.1 <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_1, df_1, pvalue_1) %>% 
+  arrange(desc(waldStat_1))
+
+head(assoRes.pdt.1,20)
+
+# pdt.left
+assoRes.pdt.left <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_1, df_1, pvalue_1) %>% 
+  arrange(desc(waldStat_1))
+```
+
+**PHATE (ETI T2 vs UT T2 vs Healthy)
+```{r}
+# set scelltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu4 <- subset(s, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c("CF-untreated_t1",
+                                                                "CF-untreated_t2",
+                                                                "Healthy"
+                                                                ))
+seu4$condition3 <- fct_drop(seu4$condition3)
+DefaultAssay(seu4) <- "RNA"
+
+# normalize and scale data
+seu4 <- NormalizeData(seu4)
+seu4 <- ScaleData(seu4)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu) <- "RNA"
+seu4 <- SCTransform(seu4, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu4@assays$RNA@data[VariableFeatures(seu4),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu4[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu4))
+
+# # FindNeighbors
+# seu4 <- FindNeighbors(seu4, reduction = "PHATE", dims = 1:2)
+# seu4 <- FindClusters(seu4, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition3.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated_t2","CF-untreated_t2","Healthy"))
+Timepoint.colors <- setNames(c("#a4133c", "#ffa5ab", "#5b8e7d"),
+                              c("T1","T2","N/A"))
+# F2d ==========================================================================
+seu4@reductions$PHATE@cell.embeddings[,2] <- -seu4@reductions$PHATE@cell.embeddings[,2]
+
+f2d7 <- DimPlot(seu4, 
+        reduction = "PHATE",
+        group.by = "condition1",
+        cols = Condition1.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+
+f2d8 <- DimPlot(seu4, 
+        reduction = "PHATE",
+        group.by = "Timepoint",
+        cols = Timepoint.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+
+f2d6+f2d8
+
+```
+
+PHATE (CF vs Healthy)
+```{r}
+# set scelltype
+celltype <- "RM"
+
+#seu <- ds.seu
+seu5 <- subset(s, 
+              Annotation %in% c("recMo/MΦ"))
+
+DefaultAssay(seu5) <- "RNA"
+
+# normalize and scale data
+seu5 <- NormalizeData(seu5)
+seu5 <- ScaleData(seu5)
+
+#Dimensionality reduction with PHATE
+DefaultAssay(seu) <- "RNA"
+seu5 <- SCTransform(seu5, method = "glmGamPoi",
+                   vars.to.regress = c("subsets_Mito_percent",
+                                       "subsets_Ribo_percent"),
+                   variable.features.n = 2000)
+
+seurat_data <- as.data.frame(seu5@assays$RNA@data[VariableFeatures(seu5),])
+phate_data <- t(seurat_data)
+
+# when comparing CF_treated_t1 vs Healthy
+# ref: https://rdrr.io/cran/phateR/f/inst/examples/bonemarrow_tutorial.Rmd
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+embeddings <- phate_output$embedding
+
+seu5[["PHATE"]] <- CreateDimReducObject(embeddings = embeddings, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu5))
+
+# FindNeighbors
+seu5 <- FindNeighbors(seu5, reduction = "PHATE", dims = 1:2)
+seu5 <- FindClusters(seu5, resolution = 0.1, algorithm = 4, method="matrix")
+
+Condition1.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              c("CF","Healthy"))
+Condition3.colors <- setNames(c("#a4133c", "#f4d58d", "#5b8e7d"),
+                              c("ETI-treated_t2","CF-untreated_t2","Healthy"))
+
+# F2d ==========================================================================
+seu5@reductions$PHATE@cell.embeddings[,2] <- -seu5@reductions$PHATE@cell.embeddings[,2]
+
+f2d9 <- DimPlot(seu5, 
+        reduction = "PHATE",
+        group.by = "condition1",
+        cols = Condition1.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+
+f2d10 <- DimPlot(seu5, 
+        reduction = "PHATE",
+        group.by = "predicted.ann_level_3",
+        #cols = Condition1.colors,
+        shuffle = TRUE) +
+  theme_minimal() +
+  theme(panel.border = element_blank(), 
+        panel.grid = element_blank(),
+        text = element_text(family = "Ariel"),
+        axis.text=element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.title = element_text(face="bold", size=12))
+f2d9+f2d10
+
+```
+
+Visualize PHATE and select the central cluster
+```{r}
+# Visualize PHATE_cluster. Look for the central cluster as starting point
+DimPlot(seu,
+        reduction = "PHATE",
+        group.by = "seurat_clusters")
+```
+
+Trajectory inference using Slingshot
+```{r}
+# convert SEU to SCE
+sce <- as.SingleCellExperiment(seu)
+## Remarks on counts
+# note that pseudotime analysis is inferred from PHATE embeddings not the counts
+# counts are only used for TradeSeq
+# so you don't have to specify 'data' slot here
+
+# Run Slingshot
+set.seed(1)
+sce <- slingshot(sce,
+                 clusterLabels = seu$seurat_clusters,
+                 start.clus="4", #  ** define the starting cluster here **
+                 reducedDim = "PHATE",
+                 allow.breaks=FALSE)
+
+# prepare sds object
+sds <- as.SlingshotDataSet(sce)
+sds
+
+# save objects
+RM.list <- list(seu,sce,assoRes,endRes)
+
+pdt.left <- setNames(sce$slingPseudotime_1, colnames(counts(sce)))
+pdt.right <- setNames(sce$slingPseudotime_2, colnames(counts(sce)))
+
+seu <- AddMetaData(seu, pdt.left, col.name = "pdt.left")
+seu <- AddMetaData(seu, pdt.right, col.name = "pdt.right")
+
+df <- data.frame("PHATE_1" = as.numeric(seu@reductions$PHATE@cell.embeddings[,1]),
+                 "PHATE_2" = as.numeric(seu@reductions$PHATE@cell.embeddings[,2]),
+                 "pdt.left" = as.numeric(seu@meta.data$pdt.left),
+                 "pdt.right" = as.numeric(seu@meta.data$pdt.right))
+
+f2d3 <- ggplot(df, aes(x=PHATE_1, y=PHATE_2)) +
+  geom_point(aes(colour=pdt.left),size=0.3, alpha=1) +
+  theme_classic() +
+  scale_color_gradient2(high="#c9184a", low="#ffccd5", na.value = "#dedbd8") +
+  scale_x_continuous(breaks = c(-0.01, 0.02, 0.05)) +
+  scale_y_continuous(breaks = c(-0.001, 0.001, 0.003)) +
+  theme(text = element_text(family = "Ariel"),
+        axis.text.x = element_text(vjust = 1,
+                                   hjust = 1,
+                                   size=8,
+                                   colour = "black"),
+        axis.text.y = element_text(size=8,
+                                   colour = "black"),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=8)) +
+  guides(fill = guide_legend(keyheight=0.1,
+                             keywidth=0.1)) + NoLegend()
+
+f2d4 <- ggplot(df, aes(x=PHATE_1, y=PHATE_2)) +
+  geom_point(aes(colour=pdt.right),size=0.3, alpha=1) +
+  theme_classic() +
+  scale_color_gradient2(high="#0a2472", low="#e3f2fd", na.value = "#dedbd8") +
+  scale_x_continuous(breaks = c(-0.01, 0.02, 0.05)) +
+  scale_y_continuous(breaks = c(-0.001, 0.001, 0.003)) +
+  theme(text = element_text(family = "Ariel"),
+        axis.text.x = element_text(vjust = 1,
+                                   hjust = 1,
+                                   size=8,
+                                   colour = "black"),
+        axis.text.y = element_text(size=8,
+                                   colour = "black"),
+        plot.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face="bold", size=8)) +
+  guides(fill = guide_legend(keyheight=0.1,
+                             keywidth=0.1)) + NoLegend()
+
+(f2d1+f2d2)/(f2d3+f2d4)
+
+```
+
+Differential expression using TradeSeq
+```{r}
+# prepare countMatrix ==========================================================
+# Removing some genes to speed up the computations for this tutorial
+# filt_counts <- counts
+counts <- seu@assays$RNA@counts
+filt_counts <- counts[rowSums(counts > 5) > ncol(counts)/100, ]
+
+# # fit negative binomial model
+# set.seed(1)
+# icMat <- evaluateK(counts = filt_counts, sds = sds, k = 3:10, 
+#                    nGenes = 200, verbose = T)
+
+# GAM fitting
+pseudotime <- slingPseudotime(sds, na = FALSE)
+cellWeights <- slingCurveWeights(sds)
+sce <- fitGAM(counts = filt_counts, 
+              pseudotime = pseudotime, 
+              cellWeights = cellWeights,
+              nknots = 6, verbose = TRUE)
+
+table(rowData(sce)$tradeSeq$converged)
+
+# association of gene expression with pseudotime
+assoRes <- associationTest(sce, global=FALSE, lineages=TRUE)
+assoRes
+
+# pdt.1
+assoRes.pdt.1 <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_1, df_1, pvalue_1) %>% 
+  arrange(desc(waldStat_1))
+# pdt.2
+assoRes.pdt.2 <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_2, df_2, pvalue_2) %>% 
+  arrange(desc(waldStat_2))
+# pdt.3
+assoRes.pdt.3 <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_3, df_3, pvalue_3) %>% 
+  arrange(desc(waldStat_3))
+
+head(assoRes.pdt.1,20)
+head(assoRes.pdt.2,20)
+head(assoRes.pdt.3,20)
+
+
+# pdt.left
+assoRes.pdt.left <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_1, df_1, pvalue_1) %>% 
+  arrange(desc(waldStat_1))
+# pdt.right
+assoRes.pdt.right <- data.frame(assoRes) %>% 
+  dplyr::select(waldStat_2, df_2, pvalue_2) %>% 
+  arrange(desc(waldStat_2))
+
+assoRes.pdt.right
+
+write.csv(assoRes.pdt.left,file = "assoRes.pdt.left.csv")
+write.csv(assoRes.pdt.right,file = "assoRes.pdt.right.csv")
+
+
+# between-lineage comparison
+endRes <- diffEndTest(sce)
+endRes %>% arrange(desc(waldStat)) %>% head(20)
+
+
+# differential expression between starting point and end point of a lineage
+startRes <- startVsEndTest(sce, lineages=TRUE)
+head(startRes)
+
+# pdt.1
+startRes.pdt.1 <- data.frame(startRes) %>% 
+  dplyr::select(waldStat_lineage1, pvalue_lineage1) %>% 
+  arrange(desc(waldStat_lineage1))
+# pdt.2
+startRes.pdt.2 <- data.frame(startRes) %>% 
+  dplyr::select(waldStat_lineage2, pvalue_lineage2) %>% 
+  arrange(desc(waldStat_lineage2))
+# pdt.3
+startRes.pdt.3 <- data.frame(startRes) %>% 
+  dplyr::select(waldStat_lineage3, pvalue_lineage3) %>% 
+  arrange(desc(waldStat_lineage3))
+
+head(startRes.pdt.1,20)
+head(startRes.pdt.2,20)
+head(startRes.pdt.3,20)
+
+startRes %>% arrange(desc(waldStat))
+class(startRes)
+oStart <- order(startRes$waldStat, decreasing = TRUE)
+oStart
+sigGeneStart <- names(sce)[oStart[1]]
+sigGeneStart
+plotSmoothers(sce, counts, gene = "ITIH5")
+
+(plotGeneCount(sds, counts, gene = "FABP4") + scale_color_gradientn(colors=inferno(256))) /
+(plotGeneCount(sds, counts, gene = "APOC1") + scale_color_gradientn(colors=inferno(256))) /
+(plotGeneCount(sds, counts, gene = "C1QB") + scale_color_gradientn(colors=inferno(256))) |
+# data
+((FeaturePlot(seu,
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256))) +
+  (FeaturePlot(seu,
+            reduction = "PHATE",
+            features = c("APOC1")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256))) +
+  (FeaturePlot(seu,
+            reduction = "PHATE",
+            features = c("C1QB")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256)))) |
+# count
+((FeaturePlot(seu, slot="counts",
+            reduction = "PHATE",
+            features = c("FABP4")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2)))) +
+  #scale_color_gradientn(colours = inferno(256))) +
+  (FeaturePlot(seu, slot="counts",
+            reduction = "PHATE",
+            features = c("APOC1")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2)))) +
+  #scale_color_gradientn(colours = inferno(256))) +
+  (FeaturePlot(seu, slot="counts",
+            reduction = "PHATE",
+            features = c("C1QB")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2)))))
+  #scale_color_gradientn(colours = inferno(256))))
+
+pdt.matrix <- data.frame(pdt[,2])
+
+cw.matrix[!is.na(cw.matrix)] <- 1
+cw.matrix[is.na(cw.matrix)] <- 0
+cw.matrix <- as.matrix(cw.matrix)
+
+pdt.matrix[is.na(pdt.matrix)] <- 0
+pdt.matrix <- as.matrix(pdt.matrix)
+
+# GAM fitting
+sce <- fitGAM(counts = as.matrix(filt_counts), 
+              #sds = curves,
+              pseudotime = pdt.matrix,
+              cellWeights = cw.matrix)
+
+# Define function to plot
+plot_differential_expression <- function(feature_id) {
+    # feature_id <- pseudotime_start_end_association %>% 
+    #   dplyr::filter(pvalue < 0.05) %>% 
+    #   dplyr::top_n(1, -waldStat) %>% 
+    #   dplyr::pull(feature_id)
+    cowplot::plot_grid(plotGeneCount(curves, filt_counts, 
+                                     gene = feature_id[1], 
+                                     clusters = clustering, models = sce) + 
+                         ggplot2::theme(legend.position = "right") +
+                         scale_color_gradientn(colours =inferno(256))) 
+        #plotSmoothers(sce, as.matrix(counts), gene = feature_id[1]))
+}
+
+# DEGS that change with pseudotime
+pseudotime_association <- associationTest(sce)
+pseudotime_association$fdr <- p.adjust(pseudotime_association$pvalue, method = "fdr")
+pseudotime_association <- pseudotime_association[order(pseudotime_association$pvalue), ]
+pseudotime_association$feature_id <- rownames(pseudotime_association)
+
+feature_id <- pseudotime_association %>% filter(pvalue < 0.05) %>% top_n(1, -waldStat) %>% pull(feature_id)
+feature_id
+plot_differential_expression(feature_id)
+
+# DEGs that between two pseudotime points
+pseudotime_start_end_association <- startVsEndTest(sce, 
+                                                   pseudotimeValues = c(0, 1),
+                                                   lineages=TRUE)
+pseudotime_start_end_association$fdr <- p.adjust(pseudotime_start_end_association$pvalue, method = "fdr")
+pseudotime_start_end_association <- pseudotime_start_end_association[order(pseudotime_start_end_association$pvalue), ]
+pseudotime_start_end_association$feature_id <- rownames(pseudotime_start_end_association)
+
+feature_id <- pseudotime_start_end_association %>% 
+  filter(pvalue < 0.05) %>% 
+  top_n(10, waldStat) %>% 
+  pull(feature_id)
+
+feature_id
+feature_id <- c("CTSL","LYZ","LGALS1","C1QA")
+plot_differential_expression(feature_id)
+
+
+
+```
+
+
+Plot PHATE
+```{r}
+Condition.colors <- setNames(c("#a4133c","#5b8e7d"),
+                              levels(factor(seu$condition1)))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(factor(seu$Subject)))
+
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(factor(seu$Sample)))
+
+# plot using seurat's default tools
+phate.df <- data.frame(seu@reductions$PHATE@cell.embeddings)
+metdata.df <- seu@meta.data %>% dplyr::select(Subject, Sample, condition1,condition2,condition3)
+
+df <- cbind(phate.df, metdata.df)
+df$condition1 <- factor(df$condition1,
+                        levels=c("CF","Healthy"))
+
+# colored by gene expression
+ggplot(df) +
+  #geom_jitter(aes(PHATE_1, PHATE_2, color=df$MSR1)) +
+  geom_point(aes(PHATE_1, PHATE_2, color=condition1),size=1,) +
+  scale_color_manual(values = Condition.colors) +
+  #scale_color_gradientn(colours = inferno(16)) +
+  theme_classic() +
+  theme()
+
+
+# when comparing CF_treated_t1 vs Healthy
+phate_output <- phate(phate_data,
+                      ndim=2,
+                      knn=50,
+                      npca=5,
+                      t=50
+                      )
+
+## stash the embeddings back into the seurat object as a dimension reduction object
+seu[["PHATE"]] <- CreateDimReducObject(embeddings = phate_output$embedding, 
+                                       key = "PHATE_", 
+                                       assay = DefaultAssay(seu))
+# plot using seurat's default tools
+DimPlot(seu , 
+        reduction = "PHATE",
+        group.by = "condition3",
+        #cols=Condition.colors,
+        shuffle = TRUE) + ggtitle(label = "PHATE")
+
+plot_features <- function(x) {
+  FeaturePlot(seu,
+            reduction = "PHATE",
+            features = x) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256))
+}
+
+
+plot_features("LYZ") + plot_features("CTSL") + plot_features("C1QA")
+
+
+FeaturePlot(seu,
+            reduction = "PHATE",
+            features = c("LYZ","CTSL","C1QA")) +
+  xlim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_1))) +
+  ylim(c(min(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2),
+         max(data.frame(seu@reductions$PHATE@cell.embeddings)$PHATE_2))) +
+  scale_color_gradientn(colours = inferno(256))
+
+```
+
+
+Write plot
+```{r}
+pdf("pseudotime.DE.230707.pdf",height = 8,width=6)
+par(mfrow = c(3, 4))
+for (i in seq_along(top_genes)) {
+  # colored by genes
+  colors <- inferno(64)[cut(dat_use[,top_genes[i]], breaks = 64)]
+  # colored by condition
+  #colors <- Condition.colors[dat_use[,top_genes[i]]]
+  plot(data.frame(reducedDim(sds)) %>% dplyr::arrange(top_genes[i]), col = colors, 
+       pch = 18, cex = 1.5, main = top_gene_name[i])
+  #lines(sds, lwd = 2, cex=0, col = 'black', type = 'lineages')
+}
+dev.off()
+
+```
+
+
+Plot
+```{r}
+plot(dimred, col = clustering, asp = 1)
+lines(sds, type = 'l', lwd = 3)
+
+
+# Define a color pallete to use
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+
+# Plot the lineages
+par(mfrow = c(1, 2))
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+for (i in levels(clustering)) {
+    text(mean(dimred[clustering == i, 1]), mean(dimred[clustering == i, 2]), labels = i, font = 2)
+}
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+lines(lineages, lwd = 3, col = "black")
+
+# define principal curves
+
+curves <- getCurves(lineages, 
+                    approx_points = 300, thresh = 0.01, 
+                    stretch = 0.8, allow.breaks = FALSE, shrink = 0.99)
+curves
+
+plot(dimred, col = pal[clustering], asp = 1, pch = 16)
+lines(curves, lwd = 3, col = "black")
+
+
+
+
+```
+
+Subset recruited macrophages
+```{r}
+# subset
+seu <- subset(s, Annotation %in% c("recMo/MΦ") & condition2 == "Healthy")
+seu <- subset(ds.seu, 
+              Annotation %in% c("recMo/MΦ") & condition3 %in% c("CF_treated_t1",
+                                                                "CF_treated_t2"))
+
+
+seu <- subset(ds.seu, 
+              Annotation %in% c("recMo/MΦ") & condition3 == "CF_treated_t1")
+
+seu <- subset(ds.seu, 
+              Annotation %in% c("recMo/MΦ") & condition3 == "CF_treated_t2")
+
+seu$Annotation <- fct_drop(seu$Annotation)
+seu$condition1 <- fct_drop(seu$condition1)
+seu$condition3 <- fct_drop(seu$condition3)
+```
+
+Clustering
+```{r}
+DefaultAssay(seu) <- "integrated"
+VariableFeatures(seu) <- rownames(seu)
+seu <-RunPCA(seu) %>%
+  RunUMAP(reduction = "pca", dims = 1:30)
+
+# 
+# seu <- FindClusters(seu,
+#                     algorithm = 3,
+#                     method = "igraph",
+#                     resolution = 0.02)
+# Idents(seu) <- "integrated_snn_res.0.02"
+# 
+# Idents(seu)
+# # Cepo marker gene
+# cepoMarkers <- Cepo(seu[["RNA"]]@data, 
+#                    seu$integrated_snn_res.0.05,
+#                    exprsPct = 0.1)
+# cepoMarkers$stats
+
+DefaultAssay(seu) <- "RNA"
+
+```
+
+Prepare celldataset object
+```{r}
+cds <- as.cell_data_set(seu)
+
+# cell metadata
+head(colData(cds))
+
+# gene metadata
+fData(cds)
+rownames(fData(cds))[1:10]
+
+# add the gene_short_name column
+fData(cds)$gene_short_name <- rownames(fData(cds))
+
+# counts
+head(counts(cds))
+
+# assign partitions
+recreate.partition <- c(rep(1,length(cds@colData@rownames)))
+names(recreate.partition) <- cds@colData@rownames
+recreate.partition <- as.factor(recreate.partition)
+
+cds@clusters$UMAP$partitions <- recreate.partition
+
+# assign the cluster info
+list_cluster <- seu$Annotation
+cds@clusters$UMAP$clusters <- list_cluster
+
+# assign UMAP coordinate - cell embeddings
+cds@int_colData@listData$reducedDims$UMAP <- seu@reductions$umap@cell.embeddings
+
+```
+
+Plot cells before trajectory inference
+```{r}
+plot_cells(cds,
+           color_cells_by = 'cluster',
+           label_groups_by_cluster = FALSE,
+           group_label_size = 5) +
+  theme(legend.position = "right")
+
+
+
+```
+
+Learn trajectory graph
+```{r}
+cds <- learn_graph(cds, use_partition = FALSE)
+
+plot_cells(cds,
+           color_cells_by = 'Annotation',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE,
+           group_label_size = 5)
+
+```
+
+Order the cell in pseudotime
+```{r}
+cds <- order_cells(cds,
+                   reduction_method = 'UMAP',
+                   root_cells = colnames(cds[,clusters(cds)=="recMo/MΦ"]))
+
+plot_cells(cds,
+           color_cells_by = "Annotation",
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE)
+
+```
+
+Visualize pseudotime distribution across clusters
+```{r}
+cds$monocle3_pseudotime <- pseudotime(cds)
+data.pseudo <- as.data.frame(colData(cds))
+
+# cluster-wise cell composition
+ggplot(data.pseudo, aes(monocle3_pseudotime, reorder(Annotation, )),
+       fill=Annotation) + geom_boxplot()
+```
+
+Find genes that change as a function of pseudotime
+```{r}
+deg <- graph_test(cds, neighbor_graph = 'principal_graph', cores=4)
+
+deg <- deg %>%
+  arrange(q_value) %>%
+  filter(status=='OK')
+
+deg.top400 <- rownames(head(deg,400))
+deg.top400
+
+```
+
+Add pseudotime to seu
+```{r}
+seu$pseudotime <- pseudotime(cds)
+FeaturePlot(seu,
+            features="pseudotime")
+```
+
+prepare object for heatmap
+```{r}
+# scale data
+seu <- ScaleData(seu)
+
+seu$HTO_HTODemux <- factor(seu$HTO_HTODemux,
+                           levels=paste0("Human_HTO_",c(3,6,7,8,10,12,13,14,15,16)))
+
+# add subject to metadata
+Subject <- setNames(c("ETI1","ETI1",
+                      "ETI2","ETI2",
+                      "UT1","UT1",
+                      "UT2","UT2",
+                      "HC1","HC2"),levels(seu$HTO_HTODemux))
+
+Subject <- Subject[seu$HTO_HTODemux]
+names(Subject) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Subject, col.name = "Subject")
+seu$Subject <- factor(seu$Subject,
+                          levels=c("ETI1","ETI2",
+                                   "UT1","UT2",
+                                   "HC1","HC2"))
+
+# add Sample to metadata
+Sample <- setNames(c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"),levels(seu$HTO_HTODemux))
+
+Sample <- Sample[seu$HTO_HTODemux]
+names(Sample) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = Sample, col.name = "Sample")
+seu$Sample <- factor(seu$Sample,
+                          levels=c("M1C188_T1","M1C188_T2",
+                      "M1C160_T1","M1C160_T2",
+                      "M1C170_T1","M1C170_T2",
+                      "M1C176_T1","M1C176_T2",
+                      "M1N092","M1N075"))
+
+# add condition1 to metadata
+condition1 <- setNames(c(rep("CF",8), # Trikafta indiv as treated
+                         rep("Healthy",2)), levels(seu$HTO_HTODemux))
+condition1 <- condition1[seu$HTO_HTODemux]
+names(condition1) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = condition1, col.name = "condition1")
+seu$condition1 <- factor(seu$condition1)
+
+# add Timepoint to metadata
+timepoint <- setNames(c(rep(c("T1","T2"),4),
+                         rep("N/A",2)), levels(seu$HTO_HTODemux))
+timepoint <- timepoint[seu$HTO_HTODemux]
+names(timepoint) <- colnames(seu)
+seu <- AddMetaData(seu, metadata = timepoint, col.name = "Timepoint")
+seu$Timepoint <- factor(seu$Timepoint,
+                             levels=c("T1","T2","N/A"))
+
+# Condition.colors <- setNames(c("#a4133c","#5b8e7d"),
+#                               levels(seu$condition3))
+
+Subject.colors <- setNames(c(kelly(22)[c(11,16)],
+                           kelly(22)[c(3,15)],
+                           kelly(22)[c(19,10)]),
+                           levels(seu$Subject))
+
+Timepoint.colors <- setNames(kelly(22)[c(6,12,9)],
+                             levels(seu$Timepoint))
+
+Sample.colors <- setNames(kelly(22)[3:12],
+                          levels(seu$Sample))
+
+```
+
+Assign results to condition
+
+# All
+```{r}
+seu.healthy <- seu
+deg.healthy <- deg
+cds.healthy <- cds
+
+```
+
+# CF_treated_t1
+```{r}
+seu.CF_treated_t1 <- seu
+```
+
+# CF_treated_t2
+```{r}
+seu.CF_treated_t2 <- seu
+```
+
+
+# recMo/MΦ
+```{r}
+write.csv(deg, file = "deg.recMoMac.treated_t1.Healthy.pseudotime.csv")
+
+
+```
+
+
+Plot heatmap
+```{r}
+seu<- AddMetaData(seu, metadata = pdt, col.name = "pseudotime")
+
+dittoHeatmap(seu,
+             genes=top_genes,
+             # genes=c("FABP5","GPNMB","CD9","CD81","APOC1",
+             #         "LGMN","APOE","MSR1","MRC1","TREM2",
+             #         "C1QA","C1QB","C1QC"),
+             #order.by = c("MΦ.subtype","Condition","Sample"),
+             order.by = ,
+             annot.by = rev(c("pseudotime","condition3")),
+             heatmap.colors.max.scaled = inferno(256),
+             width=unit(0.0001/ncol(seu), "npc"),
+             complex = TRUE,
+             scaled.to.max = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             # annotation_colors = list("condition3" = Condition.colors
+             #                          ),
+             #gaps_col=c(10,20,30,40,50,60,70),
+             legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+             name = "Scale",
+             fontsize_row=8,
+             fontface_row = "italic",
+             # annotation_legend_param = list(labels_gp = gpar(fontface="italic",
+             #                                fontsize=8)),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             #cellheight=12,
+             #cellwidth=10
+             )
+
+
+dittoHeatmap(seu.CF_treated_t2,
+             genes=deg.top400[1:200],
+             # genes=c("FABP5","GPNMB","CD9","CD81","APOC1",
+             #         "LGMN","APOE","MSR1","MRC1","TREM2",
+             #         "C1QA","C1QB","C1QC"),
+             #order.by = c("MΦ.subtype","Condition","Sample"),
+             order.by = c("CST3"),
+             annot.by = rev(c("pseudotime","condition3")),
+             heatmap.colors.max.scaled = inferno(256),
+             width=unit(0.0001/ncol(seu), "npc"),
+             complex = TRUE,
+             scaled.to.max = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = FALSE,
+             # annotation_colors = list("condition3" = Condition.colors
+             #                          ),
+             #gaps_col=c(10,20,30,40,50,60,70),
+             legend_breaks = c(0,0.2,0.4,0.6,0.8,1),
+             name = "Scale",
+             fontsize_row=8,
+             fontface_row = "italic",
+             # annotation_legend_param = list(labels_gp = gpar(fontface="italic",
+             #                                fontsize=8)),
+             heatmap_legend_param = list(labels_gp = gpar(fontsize = 8),
+                                         legend_direction = "vertical"
+                                         ),
+             #cellheight=12,
+             #cellwidth=10
+             )
+
+```
+
+```{r}
+head(deg.healthy)
+head(deg.treated.t1)
+```
+
+
+
+Phate tutorial
+```{r}
+data(tree.data)
+plot(prcomp(tree.data$data)$x, col=tree.data$branches)
+tree.phate <- phate(tree.data$data)
+summary(tree.phate)
+
+# plot embedding
+palette(rainbow(10))
+plot(tree.phate, col = tree.data$branches)
+
+# runs phate with different parameters
+tree.phate <- phate(tree.data$data, gamma=0, t=120, init=tree.phate)
+# plot embedding
+palette(rainbow(10))
+plot(tree.phate, col = tree.data$branches)
+cluster_phate(k = )
+```
+
+
+
+
+
+
+
+
